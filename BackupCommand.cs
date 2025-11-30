@@ -128,9 +128,21 @@ public static class BackupCommand
                 // Set metadata for the first image
                 if (partitionIndex == 1)
                 {
+                    Logger.Log("Storing drive geometry metadata in WIM...", Logger.LogLevel.Info);
                     var imageInfo = $"<WIM><IMAGE><DESCRIPTION>{metadata}</DESCRIPTION></IMAGE></WIM>";
-                    WimApi.WIMSetImageInformation(imageHandle, imageInfo);
-                    Logger.Log("Metadata stored in WIM", Logger.LogLevel.Info);
+                    
+                    if (!WimApi.WIMSetImageInformation(imageHandle, imageInfo))
+                    {
+                        var error = Marshal.GetLastWin32Error();
+                        var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                        Logger.Log($"WARNING: Failed to store metadata in WIM - Error {error}: {errorDesc}", Logger.LogLevel.Warning);
+                        Logger.Log("The WIM file will be created but restore may not work properly without metadata", Logger.LogLevel.Warning);
+                    }
+                    else
+                    {
+                        Logger.Log($"Successfully stored metadata ({metadata.Length} chars)", Logger.LogLevel.Info);
+                        Logger.Log("Metadata preview: " + (metadata.Length > 100 ? metadata.Substring(0, 100) + "..." : metadata), Logger.LogLevel.Debug);
+                    }
                 }
 
                 Logger.Log($"Partition {partition.Letter}: captured successfully (Index {partitionIndex})", Logger.LogLevel.Info);
