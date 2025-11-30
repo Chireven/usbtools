@@ -215,6 +215,17 @@ class Program
             return 1;
         }
 
+        // Resolve source path (handle missing extension)
+        var resolvedSource = ResolveSourcePath(source);
+        if (resolvedSource == null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: Source file '{source}' not found.");
+            Console.ResetColor();
+            return 1;
+        }
+        source = resolvedSource;
+
         return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider);
     }
 
@@ -247,7 +258,55 @@ class Program
             return 1;
         }
 
+        // Resolve source path (handle missing extension)
+        var resolvedSource = ResolveSourcePath(source);
+        if (resolvedSource == null)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: Source file '{source}' not found.");
+            Console.ResetColor();
+            return 1;
+        }
+        source = resolvedSource;
+
         return await TestCommand.ExecuteAsync(source);
+    }
+
+    private static string? ResolveSourcePath(string sourcePath)
+    {
+        if (File.Exists(sourcePath))
+        {
+            return sourcePath;
+        }
+
+        // Try with .usbwim extension
+        // If the file has no extension, add it. If it has one, replace it? 
+        // User said "look for the same file with a .usbwim extension".
+        // Usually implies replacing the extension or appending if missing.
+        // Path.ChangeExtension handles both (replaces if present, appends if not).
+        var usbWimPath = Path.ChangeExtension(sourcePath, ".usbwim");
+        
+        // If the original path didn't have an extension, Path.ChangeExtension adds it.
+        // If it had one (e.g. .wim), it replaces it.
+        // We should also check if simply appending .usbwim works (e.g. file is "image" -> "image.usbwim")
+        // But Path.ChangeExtension is the standard behavior for "changing extension".
+        
+        if (File.Exists(usbWimPath))
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"Warning: Source file '{sourcePath}' not found.");
+            Console.WriteLine($"Found '{usbWimPath}' instead.");
+            Console.ResetColor();
+            
+            Console.Write("Do you want to use this file? [Y/n] ");
+            var response = Console.ReadLine();
+            if (string.IsNullOrEmpty(response) || response.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase))
+            {
+                return usbWimPath;
+            }
+        }
+
+        return null;
     }
 
     private static int ShowHelp()
