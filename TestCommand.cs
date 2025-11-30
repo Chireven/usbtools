@@ -92,9 +92,38 @@ public static class TestCommand
                             Logger.Log($"  Total Size: {geometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
                             Logger.Log($"  Partitions: {geometry.Partitions.Count}", Logger.LogLevel.Info);
                             
+                            // Calculate minimum size required
+                            // For fixed partitions, use full size. For variable (data) partitions, use UsedSpace + overhead.
+                            // To be safe, we'll use UsedSpace + 20% buffer for variable partitions, or full size if fixed.
+                            // But simpler approach requested: "use used space values".
+                            // Let's use: Sum(Max(UsedSpace + 100MB, 10MB)) + 10MB partition table overhead
+                            // We add 100MB buffer to used space to allow for filesystem structures/journaling.
+                            
+                            long minSize = 0;
                             foreach(var p in geometry.Partitions)
                             {
-                                Logger.Log($"    - Partition {p.Index}: {p.FileSystem} ({p.Size:N0} bytes) {(p.IsActive ? "[Active]" : "")}", Logger.LogLevel.Info);
+                                if (p.IsFixed)
+                                {
+                                    minSize += p.Size;
+                                }
+                                else
+                                {
+                                    // If UsedSpace is 0 (e.g. failed to get it), fallback to Size
+                                    long effectiveUsed = p.UsedSpace > 0 ? p.UsedSpace : p.Size;
+                                    // Add 100MB buffer for filesystem overhead on restore
+                                    minSize += effectiveUsed + (100 * 1024 * 1024);
+                                }
+                            }
+                            
+                            // Add global overhead
+                            minSize += (10 * 1024 * 1024);
+
+                            Logger.Log($"  Minimum Drive Size: {minSize:N0} bytes ({minSize / (1024.0 * 1024 * 1024):F2} GB)", Logger.LogLevel.Info);
+
+                            foreach(var p in geometry.Partitions)
+                            {
+                                var usedStr = p.UsedSpace > 0 ? $"Used: {p.UsedSpace:N0} bytes" : "Used: Unknown";
+                                Logger.Log($"    - Partition {p.Index}: {p.FileSystem} ({p.Size:N0} bytes) [{usedStr}] {(p.IsActive ? "[Active]" : "")}", Logger.LogLevel.Info);
                             }
 
                             // Verify partition count matches image count (roughly)

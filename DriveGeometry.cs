@@ -51,6 +51,9 @@ public class PartitionInfo
     [JsonPropertyName("size")]
     public long Size { get; set; }
 
+    [JsonPropertyName("usedSpace")]
+    public long UsedSpace { get; set; }
+
     [JsonPropertyName("offset")]
     public long Offset { get; set; }
 

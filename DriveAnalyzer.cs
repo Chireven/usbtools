@@ -133,7 +133,7 @@ public static class DriveAnalyzer
             // Get partition details using diskpart or PowerShell
             var output = ExecutePowerShell($@"
                 Get-Partition -DiskNumber {diskNumber} | ForEach-Object {{
-                    [PSCustomObject]@{{
+                    $obj = [PSCustomObject]@{{
                         PartitionNumber = $_.PartitionNumber
                         DriveLetter = $_.DriveLetter
                         Size = $_.Size
@@ -142,7 +142,20 @@ public static class DriveAnalyzer
                         IsActive = $_.IsActive
                         GptType = $_.GptType
                         Guid = $_.Guid
+                        UsedSpace = 0
                     }}
+                    
+                    # Get volume info for used space
+                    if ($_.DriveLetter) {{
+                        try {{
+                            $vol = Get-Volume -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue
+                            if ($vol) {{
+                                $obj.UsedSpace = $vol.Size - $vol.SizeRemaining
+                            }}
+                        }} catch {{}}
+                    }}
+                    
+                    $obj
                 }} | ConvertTo-Json
             ");
 
@@ -157,6 +170,7 @@ public static class DriveAnalyzer
                     {
                         Index = item.ContainsKey("PartitionNumber") ? item["PartitionNumber"].GetInt32() : 0,
                         Size = item.ContainsKey("Size") ? item["Size"].GetInt64() : 0,
+                        UsedSpace = item.ContainsKey("UsedSpace") ? item["UsedSpace"].GetInt64() : 0,
                         Offset = item.ContainsKey("Offset") ? item["Offset"].GetInt64() : 0,
                         Type = item.ContainsKey("Type") ? item["Type"].GetString() ?? "" : "",
                         IsActive = item.ContainsKey("IsActive") && item["IsActive"].GetBoolean(),
