@@ -7,7 +7,7 @@ namespace USBTools;
 /// </summary>
 public static class BackupCommand
 {
-    public static async Task<int> ExecuteAsync(string sourceDrive, string destinationWim, string compression)
+    public static async Task<int> ExecuteAsync(string sourceDrive, string destinationWim, string compression, string provider)
     {
         try
         {
@@ -15,6 +15,7 @@ public static class BackupCommand
             Logger.Log($"Source Drive: {sourceDrive}", Logger.LogLevel.Info);
             Logger.Log($"Destination WIM: {destinationWim}", Logger.LogLevel.Info);
             Logger.Log($"Compression: {compression}", Logger.LogLevel.Info);
+            Logger.Log($"Provider: {provider}", Logger.LogLevel.Info);
 
             // Normalize drive letter
             sourceDrive = sourceDrive.TrimEnd(':', '\\');
@@ -24,9 +25,29 @@ public static class BackupCommand
             var metadataJson = geometry.ToJson();
             Logger.Log($"Drive geometry captured: {geometry.Partitions.Count} partitions", Logger.LogLevel.Info);
 
-            // Check if wimgapi is available
-            var useWimApi = WimApi.IsAvailable();
-            Logger.Log($"WIM API available: {useWimApi}", Logger.LogLevel.Info);
+            // Determine which provider to use
+            bool useWimApi;
+            if (provider == "wimapi")
+            {
+                useWimApi = true;
+                if (!WimApi.IsAvailable())
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Error: WIM API requested but wimgapi.dll is not available.");
+                    Console.ResetColor();
+                    return 1;
+                }
+            }
+            else if (provider == "dism")
+            {
+                useWimApi = false;
+            }
+            else // "auto"
+            {
+                useWimApi = WimApi.IsAvailable();
+            }
+
+            Logger.Log($"Using provider: {(useWimApi ? "WIM API" : "DISM")}", Logger.LogLevel.Info);
 
             if (useWimApi)
             {

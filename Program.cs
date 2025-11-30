@@ -46,6 +46,7 @@ class Program
         string? source = null;
         string? destination = null;
         string compression = "fast";
+        string provider = "auto";
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -64,6 +65,10 @@ class Program
             {
                 compression = args[++i];
             }
+            else if ((arg == "--provider" || arg == "-p") && i + 1 < args.Length)
+            {
+                provider = args[++i].ToLowerInvariant();
+            }
             else if (arg == "--help" || arg == "-h")
             {
                 ShowBackupHelp();
@@ -81,7 +86,7 @@ class Program
             return 1;
         }
 
-        return await BackupCommand.ExecuteAsync(source, destination, compression);
+        return await BackupCommand.ExecuteAsync(source, destination, compression, provider);
     }
 
     private static async Task<int> ExecuteRestoreAsync(string[] args)
@@ -90,6 +95,7 @@ class Program
         string? target = null;
         string? diskNumber = null;
         bool autoYes = false;
+        string provider = "auto";
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -111,6 +117,10 @@ class Program
             else if (arg == "--yes" || arg == "-y")
             {
                 autoYes = true;
+            }
+            else if ((arg == "--provider" || arg == "-p") && i + 1 < args.Length)
+            {
+                provider = args[++i].ToLowerInvariant();
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -150,7 +160,7 @@ class Program
             return 1;
         }
 
-        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes);
+        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider);
     }
 
     private static int ShowHelp()
@@ -213,6 +223,10 @@ class Program
         Console.ResetColor();
         Console.WriteLine("Compression: none, fast, max (default: fast)");
         Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -p, --provider <type>          ");
+        Console.ResetColor();
+        Console.WriteLine("Provider: auto, wimapi, dism (default: auto)");
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -h, --help                     ");
         Console.ResetColor();
         Console.WriteLine("Show help");
@@ -223,6 +237,7 @@ class Program
         Console.ResetColor();
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.wim --compression max");
+        Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.wim --provider dism");
         Console.ResetColor();
     }
 
@@ -256,6 +271,10 @@ class Program
         Console.ResetColor();
         Console.WriteLine("Auto-confirm without prompting");
         Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -p, --provider <type>     ");
+        Console.ResetColor();
+        Console.WriteLine("Provider: auto, wimapi, dism (default: auto)");
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -h, --help                ");
         Console.ResetColor();
         Console.WriteLine("Show help");
@@ -267,6 +286,7 @@ class Program
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim -t F:");
         Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim --disk 2 --yes");
+        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim -t F: --provider dism");
         Console.ResetColor();
     }
 

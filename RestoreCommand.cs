@@ -8,12 +8,13 @@ namespace USBTools;
 /// </summary>
 public static class RestoreCommand
 {
-    public static async Task<int> ExecuteAsync(string sourceWim, string? targetDrive, string? diskNumberStr, bool autoYes)
+    public static async Task<int> ExecuteAsync(string sourceWim, string? targetDrive, string? diskNumberStr, bool autoYes, string provider)
     {
         try
         {
             Logger.Log($"Starting restore operation", Logger.LogLevel.Info);
             Logger.Log($"Source WIM: {sourceWim}", Logger.LogLevel.Info);
+            Logger.Log($"Provider: {provider}", Logger.LogLevel.Info);
 
             if (!File.Exists(sourceWim))
             {
@@ -118,9 +119,29 @@ public static class RestoreCommand
             // Prepare target disk (partition and format)
             await PrepareDiskAsync(diskNumber, metadata, targetSize);
 
-            // Apply images
-            var useWimApi = WimApi.IsAvailable();
-            Logger.Log($"WIM API available: {useWimApi}", Logger.LogLevel.Info);
+            // Determine which provider to use
+            bool useWimApi;
+            if (provider == "wimapi")
+            {
+                useWimApi = true;
+                if (!WimApi.IsAvailable())
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("Error: WIM API requested but wimgapi.dll is not available.");
+                    Console.ResetColor();
+                    return 1;
+                }
+            }
+            else if (provider == "dism")
+            {
+                useWimApi = false;
+            }
+            else // "auto"
+            {
+                useWimApi = WimApi.IsAvailable();
+            }
+
+            Logger.Log($"Using provider: {(useWimApi ? "WIM API" : "DISM")}", Logger.LogLevel.Info);
 
             if (useWimApi)
             {
