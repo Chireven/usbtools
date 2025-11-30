@@ -173,6 +173,7 @@ public static class RestoreCommand
     {
         try
         {
+            Logger.Log("Attempting to read WIM metadata...", Logger.LogLevel.Debug);
             IntPtr wimHandle = IntPtr.Zero;
 
             try
@@ -187,18 +188,25 @@ public static class RestoreCommand
 
                 if (wimHandle == IntPtr.Zero)
                 {
-                    Logger.Log("Failed to open WIM with API, trying alternate method", Logger.LogLevel.Warning);
+                    var error = Marshal.GetLastWin32Error();
+                    var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                    Logger.Log($"Failed to open WIM with API - Error {error}: {errorDesc}", Logger.LogLevel.Warning);
+                    Logger.Log("This WIM may not have been created with USBTools or may be using DISM format", Logger.LogLevel.Warning);
                     return null;
                 }
+
+                Logger.Log("WIM file opened successfully", Logger.LogLevel.Debug);
 
                 // Get image information
                 if (WimApi.WIMGetImageInformation(wimHandle, out var infoPtr, out var infoSize))
                 {
+                    Logger.Log($"Retrieved WIM image information ({infoSize} bytes)", Logger.LogLevel.Debug);
                     var xmlInfo = Marshal.PtrToStringUni(infoPtr, (int)infoSize / 2);
                     
                     // Extract JSON from description field
                     if (xmlInfo != null)
                     {
+                        Logger.Log("Parsing WIM XML information...", Logger.LogLevel.Debug);
                         var descStart = xmlInfo.IndexOf("<DESCRIPTION>");
                         var descEnd = xmlInfo.IndexOf("</DESCRIPTION>");
                         
@@ -206,9 +214,36 @@ public static class RestoreCommand
                         {
                             descStart += "<DESCRIPTION>".Length;
                             var json = xmlInfo.Substring(descStart, descEnd - descStart);
-                            return DriveGeometry.FromJson(json);
+                            Logger.Log($"Found metadata in DESCRIPTION field ({json.Length} chars)", Logger.LogLevel.Debug);
+                            
+                            try
+                            {
+                                var geometry = DriveGeometry.FromJson(json);
+                                Logger.Log("Successfully parsed drive geometry metadata", Logger.LogLevel.Info);
+                                return geometry;
+                            }
+                            catch (Exception jsonEx)
+                            {
+                                Logger.Log($"Failed to parse JSON metadata: {jsonEx.Message}", Logger.LogLevel.Error);
+                                Logger.Log($"JSON content: {json}", Logger.LogLevel.Debug);
+                            }
+                        }
+                        else
+                        {
+                            Logger.Log("No DESCRIPTION field found in WIM metadata", Logger.LogLevel.Warning);
+                            Logger.Log("This WIM was likely not created with USBTools backup command", Logger.LogLevel.Warning);
                         }
                     }
+                    else
+                    {
+                        Logger.Log("Failed to convert WIM XML information to string", Logger.LogLevel.Error);
+                    }
+                }
+                else
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                    Logger.Log($"Failed to get image information - Error {error}: {errorDesc}", Logger.LogLevel.Error);
                 }
             }
             finally
@@ -224,6 +259,7 @@ public static class RestoreCommand
             Logger.LogException(ex, "Error reading WIM metadata");
         }
 
+        Logger.Log("Could not extract drive geometry from WIM - manual partition specification needed", Logger.LogLevel.Warning);
         return null;
     }
 

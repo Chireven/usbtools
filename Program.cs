@@ -9,10 +9,10 @@ class Program
 
         // Banner with colors
         Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("╔═══════════════════════════════════════╗");
-        Console.WriteLine("║    USB Tools v0.1.0                   ║");
-        Console.WriteLine("║  USB ↔ WIM Conversion Tool            ║");
-        Console.WriteLine("╚═══════════════════════════════════════╝");
+        Console.WriteLine("╔════════════════════════════╗");
+        Console.WriteLine("║    USB Tools v0.1.0        ║");
+        Console.WriteLine("║  USB ↔ WIM Conversion Tool  ║");
+        Console.WriteLine("╚════════════════════════════╝");
         Console.ResetColor();
         Console.WriteLine();
 
