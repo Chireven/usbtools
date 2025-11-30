@@ -7,6 +7,13 @@ class Program
         // Initialize logger
         Logger.Initialize();
 
+        // Check for global debug flag
+        if (args.Contains("--debug") || args.Contains("-v"))
+        {
+            Logger.DebugMode = true;
+            Logger.Log("Debug mode enabled", Logger.LogLevel.Debug);
+        }
+
         // Banner with colors
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔════════════════════════════╗");
@@ -30,6 +37,7 @@ class Program
             {
                 "backup" => await ExecuteBackupAsync(args),
                 "restore" => await ExecuteRestoreAsync(args),
+                "test" => await ExecuteTestAsync(args),
                 "help" or "--help" or "-h" or "-?" => ShowHelp(),
                 _ => ShowInvalidCommand(args[0])
             };
@@ -91,6 +99,26 @@ class Program
             return 1;
         }
 
+        // Force .usbwim extension for backups
+        var originalDestination = destination;
+        var destExtension = Path.GetExtension(destination).ToLowerInvariant();
+        
+        if (destExtension != ".usbwim")
+        {
+            var destWithoutExt = Path.GetFileNameWithoutExtension(destination);
+            var destDir = Path.GetDirectoryName(destination);
+            destination = string.IsNullOrEmpty(destDir) 
+                ? $"{destWithoutExt}.usbwim" 
+                : Path.Combine(destDir, $"{destWithoutExt}.usbwim");
+            
+            if (!string.IsNullOrEmpty(destExtension))
+            {
+                Logger.Log($"Changed extension from '{destExtension}' to '.usbwim'", Logger.LogLevel.Warning);
+                Logger.Log($"Original: {originalDestination}", Logger.LogLevel.Debug);
+                Logger.Log($"Modified: {destination}", Logger.LogLevel.Debug);
+            }
+        }
+
         // Check if destination exists and overwrite not specified
         if (File.Exists(destination) && !overwrite)
         {
@@ -99,6 +127,18 @@ class Program
             Console.WriteLine("Use --overwrite or -o to overwrite the existing file.");
             Console.ResetColor();
             return 1;
+        }
+
+        // Show countdown warning if overwriting
+        if (File.Exists(destination) && overwrite)
+        {
+            if (!CountdownHelper.ShowCountdown($"File '{destination}' will be OVERWRITTEN", 5))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("Operation cancelled by user.");
+                Console.ResetColor();
+                return 1;
+            }
         }
 
         return await BackupCommand.ExecuteAsync(source, destination, compression, provider);
@@ -178,6 +218,38 @@ class Program
         return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider);
     }
 
+    private static async Task<int> ExecuteTestAsync(string[] args)
+    {
+        string? source = null;
+
+        for (int i = 1; i < args.Length; i++)
+        {
+            var arg = args[i].ToLowerInvariant();
+            
+            if ((arg == "--source" || arg == "-s") && i + 1 < args.Length)
+            {
+                source = args[++i];
+            }
+            else if (arg == "--help" || arg == "-h")
+            {
+                ShowTestHelp();
+                return 0;
+            }
+        }
+
+        if (string.IsNullOrEmpty(source))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("Error: --source is required.");
+            Console.ResetColor();
+            Console.WriteLine();
+            ShowTestHelp();
+            return 1;
+        }
+
+        return await TestCommand.ExecuteAsync(source);
+    }
+
     private static int ShowHelp()
     {
         Console.WriteLine("USB to WIM imaging tool - Backup and restore bootable USB drives");
@@ -200,6 +272,10 @@ class Program
         Console.Write("  restore  ");
         Console.ResetColor();
         Console.WriteLine("Restore WIM image to USB drive");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  test     ");
+        Console.ResetColor();
+        Console.WriteLine("Verify WIM image and metadata");
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  help     ");
         Console.ResetColor();
@@ -310,6 +386,37 @@ class Program
         Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.usbwim -t F: --provider dism");
         Console.WriteLine();
         Console.WriteLine("Note: .usbwim extension recommended for files created with USBTools");
+        Console.ResetColor();
+    }
+
+    private static void ShowTestHelp()
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.Write("Usage: ");
+        Console.ResetColor();
+        Console.WriteLine("usbtools test --source <wimfile> [options]");
+        Console.WriteLine();
+        Console.WriteLine("Verify a WIM image has valid USBTools metadata");
+        Console.WriteLine();
+        
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("Options:");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -s, --source <wimfile>    ");
+        Console.ResetColor();
+        Console.WriteLine("Source WIM file path");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -h, --help                ");
+        Console.ResetColor();
+        Console.WriteLine("Show help");
+        Console.WriteLine();
+        
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("Example:");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("  usbtools test -s C:\\Backups\\usb.usbwim");
         Console.ResetColor();
     }
 

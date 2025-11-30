@@ -8,6 +8,7 @@
     <RootNamespace>USBTools</RootNamespace>
     <AssemblyName>usbtools</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <NoWarn>CS1998;CS0219</NoWarn>
   </PropertyGroup>
 
 </Project>

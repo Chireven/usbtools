@@ -6,6 +6,7 @@ public static class Logger
 {
     private static string? _logFilePath;
     private static readonly object _lock = new();
+    public static bool DebugMode { get; set; } = false;
 
     public static void Initialize(string logFileName = "usbtools.log")
     {
@@ -23,6 +24,12 @@ public static class Logger
 
     public static void Log(string message, LogLevel level = LogLevel.Info)
     {
+        // Skip debug messages unless debug mode is enabled
+        if (level == LogLevel.Debug && !DebugMode)
+        {
+            return;
+        }
+
         var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         var logMessage = $"[{timestamp}] [{level}] {message}";
 
@@ -31,7 +38,7 @@ public static class Logger
         {
             Console.ForegroundColor = level switch
             {
-                LogLevel.Debug => ConsoleColor.Gray,
+                LogLevel.Debug => ConsoleColor.DarkGray,
                 LogLevel.Info => ConsoleColor.Green,
                 LogLevel.Warning => ConsoleColor.Yellow,
                 LogLevel.Error => ConsoleColor.Red,

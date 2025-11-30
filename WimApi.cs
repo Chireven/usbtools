@@ -10,6 +10,10 @@ public static class WimApi
 {
     private const string WimgapiDll = "wimgapi.dll";
 
+    // Access Rights
+    public const uint GENERIC_READ = 0x80000000;
+    public const uint GENERIC_WRITE = 0x40000000;
+
     // WIM Creation Disposition Flags
     public const uint WIM_CREATE_NEW = 1;
     public const uint WIM_CREATE_ALWAYS = 2;
@@ -100,9 +104,7 @@ public static class WimApi
         IntPtr wimHandle,
         WIMMessageCallback callback);
 
-    // Generic access rights
-    public const uint GENERIC_READ = 0x80000000;
-    public const uint GENERIC_WRITE = 0x40000000;
+
 
     public static bool IsAvailable()
     {
