@@ -51,41 +51,47 @@ dotnet build -c Release
 
 ## Usage
 
-### Backup Command
-
-Capture a USB drive to a WIM image:
-
+### Backup (Capture) USB Drive
 ```bash
 # Basic backup with default (fast) compression
-usbtools backup --source E: --destination "C:\Backups\usb_backup.wim"
+usbtools backup --source E: --destination "C:\Backups\usb_backup.usbwim"
 
 # With maximum compression
-usbtools backup -s E: -d "C:\Backups\usb_backup.wim" --compression max
+usbtools backup -s E: -d "C:\Backups\usb_backup.usbwim" --compression max
 
-# No compression
-usbtools backup -s E: -d "C:\Backups\usb_backup.wim" -c none
+# Overwrite existing file
+usbtools backup -s E: -d "C:\Backups\usb_backup.usbwim" -c max --overwrite
 ```
 
 **Parameters:**
 - `--source` or `-s`: Source USB drive letter (e.g., `E:`)
 - `--destination` or `-d`: Destination WIM file path
 - `--compression` or `-c`: Compression level (`none`, `fast`, `max`) - Default: `fast`
+- `--overwrite` or `-o`: Overwrite existing file
 
-### Restore Command
+**Note**: The `.usbwim` extension is recommended for images created with USBTools.
 
-Restore a WIM image to a USB drive:
-
+### Restore (Apply) to USB Drive
 ```bash
 # Restore WIM to target drive
-usbtools restore --source "C:\Backups\usb_backup.wim" --target F:
+usbtools restore --source "C:\Backups\usb_backup.usbwim" --target F:
 
 # Short form
-usbtools restore -s "C:\Backups\usb_backup.wim" -t F:
+usbtools restore -s "C:\Backups\usb_backup.usbwim" -t F:
+
+# Restore to disk number (for corrupt/unformatted drives)  
+usbtools restore -s "C:\Backups\usb_backup.usbwim" --disk 2
+
+# Auto-confirm for scripts
+usbtools restore -s "C:\Backups\usb_backup.usbwim" --disk 2 --yes
 ```
 
 **Parameters:**
 - `--source` or `-s`: Source WIM file path
 - `--target` or `-t`: Target USB drive letter (e.g., `F:`)
+- `--disk` or `-k`: Target disk number (e.g., `2`)  
+- `--yes` or `-y`: Auto-confirm without prompting
+- `--provider` or `-p`: Force provider (`auto`, `wimapi`, `dism`)
 
 ### Help
 

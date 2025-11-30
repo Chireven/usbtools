@@ -47,6 +47,7 @@ class Program
         string? destination = null;
         string compression = "fast";
         string provider = "auto";
+        bool overwrite = false;
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -69,6 +70,10 @@ class Program
             {
                 provider = args[++i].ToLowerInvariant();
             }
+            else if (arg == "--overwrite" || arg == "-o")
+            {
+                overwrite = true;
+            }
             else if (arg == "--help" || arg == "-h")
             {
                 ShowBackupHelp();
@@ -83,6 +88,16 @@ class Program
             Console.ResetColor();
             Console.WriteLine();
             ShowBackupHelp();
+            return 1;
+        }
+
+        // Check if destination exists and overwrite not specified
+        if (File.Exists(destination) && !overwrite)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: File '{destination}' already exists.");
+            Console.WriteLine("Use --overwrite or -o to overwrite the existing file.");
+            Console.ResetColor();
             return 1;
         }
 
@@ -227,17 +242,23 @@ class Program
         Console.ResetColor();
         Console.WriteLine("Provider: auto, wimapi, dism (default: auto)");
         Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -o, --overwrite                ");
+        Console.ResetColor();
+        Console.WriteLine("Overwrite existing destination file");
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -h, --help                     ");
         Console.ResetColor();
         Console.WriteLine("Show help");
         Console.WriteLine();
         
         Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("Example:");
+        Console.WriteLine("Examples:");
         Console.ResetColor();
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.wim --compression max");
-        Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.wim --provider dism");
+        Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.usbwim --compression max");
+        Console.WriteLine("  usbtools backup -s E: -d C:\\Backups\\usb.usbwim --provider dism -o");
+        Console.WriteLine();
+        Console.WriteLine("Note: .usbwim extension recommended for files created with USBTools");
         Console.ResetColor();
     }
 
@@ -284,9 +305,11 @@ class Program
         Console.WriteLine("Examples:");
         Console.ResetColor();
         Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim -t F:");
-        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim --disk 2 --yes");
-        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim -t F: --provider dism");
+        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.usbwim -t F:");
+        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.usbwim --disk 2 --yes");
+        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.usbwim -t F: --provider dism");
+        Console.WriteLine();
+        Console.WriteLine("Note: .usbwim extension recommended for files created with USBTools");
         Console.ResetColor();
     }
 

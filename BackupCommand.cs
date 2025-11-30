@@ -129,19 +129,54 @@ public static class BackupCommand
                 if (partitionIndex == 1)
                 {
                     Logger.Log("Storing drive geometry metadata in WIM...", Logger.LogLevel.Info);
-                    var imageInfo = $"<WIM><IMAGE><DESCRIPTION>{metadata}</DESCRIPTION></IMAGE></WIM>";
                     
-                    if (!WimApi.WIMSetImageInformation(imageHandle, imageInfo))
+                    // Get the existing image information
+                    if (WimApi.WIMGetImageInformation(wimHandle, out var existingInfoPtr, out var existingInfoSize))
                     {
-                        var error = Marshal.GetLastWin32Error();
-                        var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
-                        Logger.Log($"WARNING: Failed to store metadata in WIM - Error {error}: {errorDesc}", Logger.LogLevel.Warning);
-                        Logger.Log("The WIM file will be created but restore may not work properly without metadata", Logger.LogLevel.Warning);
+                        var existingXml = Marshal.PtrToStringUni(existingInfoPtr, (int)existingInfoSize / 2);
+                        
+                        if (existingXml != null)
+                        {
+                            // Find the first IMAGE tag and insert DESCRIPTION after it
+                            var imageTagPos = existingXml.IndexOf("<IMAGE INDEX=\"1\">");
+                            if (imageTagPos == -1)
+                            {
+                                imageTagPos = existingXml.IndexOf("<IMAGE>");
+                            }
+                            
+                            if (imageTagPos != -1)
+                            {
+                                // Find the end of the IMAGE tag
+                                var imageTagEnd = existingXml.IndexOf(">", imageTagPos) + 1;
+                                
+                                // Insert the DESCRIPTION
+                                var modifiedXml = existingXml.Substring(0, imageTagEnd) +
+                                                 $"\n<DESCRIPTION>{metadata}</DESCRIPTION>" +
+                                                 existingXml.Substring(imageTagEnd);
+                                
+                                // Set it back
+                                if (!WimApi.WIMSetImageInformation(wimHandle, modifiedXml))
+                                {
+                                    var error = Marshal.GetLastWin32Error();
+                                    var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                                    Logger.Log($"WARNING: Failed to store metadata - Error {error}: {errorDesc}", Logger.LogLevel.Warning);
+                                    Logger.Log("The WIM file will be created but restore may not work properly", Logger.LogLevel.Warning);
+                                }
+                                else
+                                {
+                                    Logger.Log($"Successfully stored metadata ({metadata.Length} chars)", Logger.LogLevel.Info);
+                                    Logger.Log("Metadata stored in first image DESCRIPTION field", Logger.LogLevel.Debug);
+                                }
+                            }
+                            else
+                            {
+                                Logger.Log("WARNING: Could not find IMAGE tag in WIM XML", Logger.LogLevel.Warning);
+                            }
+                        }
                     }
                     else
                     {
-                        Logger.Log($"Successfully stored metadata ({metadata.Length} chars)", Logger.LogLevel.Info);
-                        Logger.Log("Metadata preview: " + (metadata.Length > 100 ? metadata.Substring(0, 100) + "..." : metadata), Logger.LogLevel.Debug);
+                        Logger.Log("WARNING: Could not read existing WIM metadata structure", Logger.LogLevel.Warning);
                     }
                 }
 

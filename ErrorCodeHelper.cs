@@ -11,6 +11,7 @@ public static class ErrorCodeHelper
         {
             // Common WIM API errors
             1006 => "ERROR_INVALID_HANDLE - The handle is invalid. The WIM file may be corrupt or inaccessible.",
+            1465 => "ERROR_BAD_PROFILE - Invalid data format. The XML structure may be malformed.",
             2 => "ERROR_FILE_NOT_FOUND - The system cannot find the file specified.",
             3 => "ERROR_PATH_NOT_FOUND - The system cannot find the path specified.",
             5 => "ERROR_ACCESS_DENIED - Access is denied. Try running as Administrator.",
