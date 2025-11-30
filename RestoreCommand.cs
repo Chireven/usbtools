@@ -8,13 +8,12 @@ namespace USBTools;
 /// </summary>
 public static class RestoreCommand
 {
-    public static async Task<int> ExecuteAsync(string sourceWim, string targetDrive)
+    public static async Task<int> ExecuteAsync(string sourceWim, string? targetDrive, string? diskNumberStr, bool autoYes)
     {
         try
         {
             Logger.Log($"Starting restore operation", Logger.LogLevel.Info);
             Logger.Log($"Source WIM: {sourceWim}", Logger.LogLevel.Info);
-            Logger.Log($"Target Drive: {targetDrive}", Logger.LogLevel.Info);
 
             if (!File.Exists(sourceWim))
             {
@@ -22,8 +21,57 @@ public static class RestoreCommand
                 return 1;
             }
 
-            // Normalize drive letter
-            targetDrive = targetDrive.TrimEnd(':', '\\');
+            // Determine target disk number
+            int diskNumber;
+            if (!string.IsNullOrEmpty(diskNumberStr))
+            {
+                // User provided disk number directly
+                if (!int.TryParse(diskNumberStr, out diskNumber))
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Error: Invalid disk number '{diskNumberStr}'");
+                    Console.ResetColor();
+                    return 1;
+                }
+                Logger.Log($"Target Disk Number: {diskNumber}", Logger.LogLevel.Info);
+            }
+            else if (!string.IsNullOrEmpty(targetDrive))
+            {
+                // User provided drive letter - get disk number from it
+                targetDrive = targetDrive.TrimEnd(':', '\\');
+                Logger.Log($"Target Drive: {targetDrive}", Logger.LogLevel.Info);
+                
+                diskNumber = GetDiskNumberFromDrive(targetDrive);
+                if (diskNumber == -1)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Error: Could not determine disk number for drive {targetDrive}:");
+                    Console.ResetColor();
+                    return 1;
+                }
+                Logger.Log($"Disk number for drive {targetDrive}: is {diskNumber}", Logger.LogLevel.Info);
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Error: No target specified");
+                Console.ResetColor();
+                return 1;
+            }
+
+            // VALIDATION: Ensure target is a USB drive
+            if (!UsbDriveValidator.IsUsbDrive(diskNumber))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine();
+                Console.WriteLine($"ERROR: Disk {diskNumber} is NOT a USB drive!");
+                Console.WriteLine();
+                Console.WriteLine("For safety, this tool only allows restoring to removable USB drives.");
+                Console.WriteLine("This prevents accidental data loss on system or internal drives.");
+                Console.ResetColor();
+                Console.WriteLine();
+                return 1;
+            }
 
             // Get metadata from WIM
             var metadata = await ReadWimMetadataAsync(sourceWim);
@@ -35,18 +83,32 @@ public static class RestoreCommand
 
             Logger.Log($"Source geometry: {metadata.PartitionStyle}, {metadata.Partitions.Count} partitions", Logger.LogLevel.Info);
 
-            // Analyze target drive
-            var targetGeometry = DriveAnalyzer.AnalyzeDrive(targetDrive);
-            Logger.Log($"Target disk size: {targetGeometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
+            // Get target disk info
+            var diskInfo = UsbDriveValidator.GetDiskInfo(diskNumber);
+            Logger.Log($"Target disk info:\n{diskInfo}", Logger.LogLevel.Info);
+
+            // CONFIRMATION: Ask user to confirm (unless --yes flag is set)
+            var confirmMessage = $"You are about to restore to:\n\n{diskInfo}\n";
+            if (!ConfirmationHelper.Confirm(confirmMessage, autoYes))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("Operation cancelled by user.");
+                Console.ResetColor();
+                return 1;
+            }
+
+            // Get target size for geometry adaptation
+            var targetSize = GetDiskSize(diskNumber);
+            Logger.Log($"Target disk size: {targetSize:N0} bytes", Logger.LogLevel.Info);
 
             // Validate target size
-            if (targetGeometry.TotalSize < metadata.TotalSize)
+            if (targetSize < metadata.TotalSize)
             {
                 Logger.Log("WARNING: Target drive is smaller than source", Logger.LogLevel.Warning);
                 
                 // Calculate if we can fit by shrinking variable partitions
                 var fixedSize = metadata.Partitions.Where(p => p.IsFixed).Sum(p => p.Size);
-                if (targetGeometry.TotalSize < fixedSize)
+                if (targetSize < fixedSize)
                 {
                     Logger.Log("Target drive is too small even with shrinking", Logger.LogLevel.Error);
                     return 1;
@@ -54,14 +116,7 @@ public static class RestoreCommand
             }
 
             // Prepare target disk (partition and format)
-            var diskNumber = GetDiskNumberFromDrive(targetDrive);
-            if (diskNumber == -1)
-            {
-                Logger.Log("Failed to determine target disk number", Logger.LogLevel.Error);
-                return 1;
-            }
-
-            await PrepareDiskAsync(diskNumber, metadata, targetGeometry.TotalSize);
+            await PrepareDiskAsync(diskNumber, metadata, targetSize);
 
             // Apply images
             var useWimApi = WimApi.IsAvailable();
@@ -80,6 +135,10 @@ public static class RestoreCommand
             await MakeBootableAsync(diskNumber, metadata);
 
             Logger.Log("Restore completed successfully", Logger.LogLevel.Info);
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine();
+            Console.WriteLine("✓ Restore completed successfully!");
+            Console.ResetColor();
             return 0;
         }
         catch (Exception ex)
@@ -159,6 +218,20 @@ public static class RestoreCommand
         }
         catch { }
         return -1;
+    }
+
+    private static long GetDiskSize(int diskNumber)
+    {
+        try
+        {
+            var output = ExecutePowerShell($"Get-Disk -Number {diskNumber} | Select-Object -ExpandProperty Size");
+            if (long.TryParse(output.Trim(), out var size))
+            {
+                return size;
+            }
+        }
+        catch { }
+        return 0;
     }
 
     private static async Task PrepareDiskAsync(int diskNumber, DriveGeometry sourceGeometry, long targetSize)

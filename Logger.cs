@@ -32,7 +32,7 @@ public static class Logger
             Console.ForegroundColor = level switch
             {
                 LogLevel.Debug => ConsoleColor.Gray,
-                LogLevel.Info => ConsoleColor.White,
+                LogLevel.Info => ConsoleColor.Green,
                 LogLevel.Warning => ConsoleColor.Yellow,
                 LogLevel.Error => ConsoleColor.Red,
                 _ => ConsoleColor.White

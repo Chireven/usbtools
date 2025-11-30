@@ -10,8 +10,8 @@ class Program
         // Banner with colors
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔═══════════════════════════════════════╗");
-        Console.WriteLine("║      USB Tools v0.1.0                 ║");
-        Console.WriteLine("║   USB ↔ WIM Conversion Tool           ║");
+        Console.WriteLine("║    USB Tools v0.1.0                   ║");
+        Console.WriteLine("║  USB ↔ WIM Conversion Tool            ║");
         Console.WriteLine("╚═══════════════════════════════════════╝");
         Console.ResetColor();
         Console.WriteLine();
@@ -88,6 +88,8 @@ class Program
     {
         string? source = null;
         string? target = null;
+        string? diskNumber = null;
+        bool autoYes = false;
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -102,6 +104,14 @@ class Program
             {
                 target = args[++i];
             }
+            else if ((arg == "--disk" || arg == "-k") && i + 1 < args.Length)
+            {
+                diskNumber = args[++i];
+            }
+            else if (arg == "--yes" || arg == "-y")
+            {
+                autoYes = true;
+            }
             else if (arg == "--help" || arg == "-h")
             {
                 ShowRestoreHelp();
@@ -109,17 +119,38 @@ class Program
             }
         }
 
-        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(target))
+        if (string.IsNullOrEmpty(source))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("Error: Both --source and --target are required.");
+            Console.WriteLine("Error: --source is required.");
             Console.ResetColor();
             Console.WriteLine();
             ShowRestoreHelp();
             return 1;
         }
 
-        return await RestoreCommand.ExecuteAsync(source, target);
+        // Must have either --target or --disk, but not both
+        if (string.IsNullOrEmpty(target) && string.IsNullOrEmpty(diskNumber))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("Error: Either --target or --disk is required.");
+            Console.ResetColor();
+            Console.WriteLine();
+            ShowRestoreHelp();
+            return 1;
+        }
+
+        if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(diskNumber))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("Error: Cannot specify both --target and --disk.");
+            Console.ResetColor();
+            Console.WriteLine();
+            ShowRestoreHelp();
+            return 1;
+        }
+
+        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes);
     }
 
     private static int ShowHelp()
@@ -200,7 +231,7 @@ class Program
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.Write("Usage: ");
         Console.ResetColor();
-        Console.WriteLine("usbtools restore --source <wimfile> --target <drive> [options]");
+        Console.WriteLine("usbtools restore --source <wimfile> --target <drive|disk> [options]");
         Console.WriteLine();
         Console.WriteLine("Restore a WIM image to a USB drive");
         Console.WriteLine();
@@ -217,16 +248,25 @@ class Program
         Console.ResetColor();
         Console.WriteLine("Target drive letter (e.g., F:)");
         Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -k, --disk <number>       ");
+        Console.ResetColor();
+        Console.WriteLine("Target disk number (e.g., 2)");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -y, --yes                 ");
+        Console.ResetColor();
+        Console.WriteLine("Auto-confirm without prompting");
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -h, --help                ");
         Console.ResetColor();
         Console.WriteLine("Show help");
         Console.WriteLine();
         
         Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("Example:");
+        Console.WriteLine("Examples:");
         Console.ResetColor();
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim -t F:");
+        Console.WriteLine("  usbtools restore -s C:\\Backups\\usb.wim --disk 2 --yes");
         Console.ResetColor();
     }
 

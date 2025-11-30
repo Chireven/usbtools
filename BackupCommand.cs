@@ -66,7 +66,9 @@ public static class BackupCommand
             if (wimHandle == IntPtr.Zero)
             {
                 var error = Marshal.GetLastWin32Error();
-                throw new Exception($"Failed to create WIM file. Error code: {error}");
+                var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                Logger.Log($"WIM API Error {error}: {errorDesc}", Logger.LogLevel.Error);
+                throw new Exception($"Failed to create WIM file. {errorDesc}");
             }
 
             Logger.Log($"WIM file created: {wimPath}", Logger.LogLevel.Info);
@@ -93,7 +95,10 @@ public static class BackupCommand
                 if (imageHandle == IntPtr.Zero)
                 {
                     var error = Marshal.GetLastWin32Error();
-                    Logger.Log($"Failed to capture partition {partition.Letter}. Error: {error}", Logger.LogLevel.Error);
+                    var errorDesc = ErrorCodeHelper.GetErrorDescription(error);
+                    Logger.Log($"Failed to capture partition {partition.Letter}:", Logger.LogLevel.Error);
+                    Logger.Log($"  WIM API Error {error}: {errorDesc}", Logger.LogLevel.Error);
+                    Logger.Log($"  Partition: {partition.Letter}: ({partition.FileSystem}) - {partition.Size:N0} bytes", Logger.LogLevel.Error);
                     continue;
                 }
 
