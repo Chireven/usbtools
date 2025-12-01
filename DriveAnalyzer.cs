@@ -40,7 +40,7 @@ public static class DriveAnalyzer
         Logger.Log($"Total disk size: {geometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
 
         // Get all partitions on this disk
-        geometry.Partitions = GetPartitions(diskNumber);
+        geometry.Partitions = GetPartitions(diskNumber, driveLetter);
         Logger.Log($"Found {geometry.Partitions.Count} partitions", Logger.LogLevel.Info);
 
         return geometry;
@@ -51,8 +51,29 @@ public static class DriveAnalyzer
         try
         {
             var letter = driveLetter.TrimEnd(':').ToUpper();
-            var output = ExecutePowerShell($"Get-Partition -DriveLetter {letter} | Select-Object -ExpandProperty DiskNumber");
+            
+            // Method 1: Standard Get-Partition (Fastest)
+            var output = ExecutePowerShell($"Get-Partition -DriveLetter {letter} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DiskNumber");
             if (int.TryParse(output.Trim(), out var diskNum))
+            {
+                return diskNum;
+            }
+
+            // Method 2: CIM/WMI (Robust fallback for Superfloppy/Removable)
+            Logger.Log($"Standard partition check failed for {letter}, trying CIM/WMI fallback...", Logger.LogLevel.Debug);
+            var wmiScript = $@"
+                try {{
+                    $drive = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ""DeviceID='{letter}:'"" -ErrorAction Stop
+                    $partition = Get-CimAssociatedInstance -InputObject $drive -ResultClassName Win32_DiskPartition -ErrorAction Stop
+                    $disk = Get-CimAssociatedInstance -InputObject $partition -ResultClassName Win32_DiskDrive -ErrorAction Stop
+                    $disk.Index
+                }} catch {{
+                    # Try direct volume mapping if partition mapping fails (rare but possible)
+                    write-error $_
+                }}
+            ";
+            output = ExecutePowerShell(wmiScript);
+            if (int.TryParse(output.Trim(), out diskNum))
             {
                 return diskNum;
             }
@@ -124,7 +145,7 @@ public static class DriveAnalyzer
         return 0;
     }
 
-    private static List<PartitionInfo> GetPartitions(int diskNumber)
+    private static List<PartitionInfo> GetPartitions(int diskNumber, string? originalDriveLetter = null)
     {
         var partitions = new List<PartitionInfo>();
 
@@ -202,6 +223,18 @@ public static class DriveAnalyzer
                     partitions.Add(partition);
                 }
             }
+
+            // If no partitions found, try to see if it's a Superfloppy (Volume without Partition)
+            if (partitions.Count == 0 && !string.IsNullOrEmpty(originalDriveLetter))
+            {
+                Logger.Log("No partitions found via Get-Partition. Checking for direct Volume (Superfloppy)...", Logger.LogLevel.Debug);
+                var fallbackPartition = GetPartitionFromVolume(originalDriveLetter, diskNumber);
+                if (fallbackPartition != null)
+                {
+                    Logger.Log("Found Superfloppy/Volume-only drive.", Logger.LogLevel.Info);
+                    partitions.Add(fallbackPartition);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -209,6 +242,59 @@ public static class DriveAnalyzer
         }
 
         return partitions;
+    }
+
+    private static PartitionInfo? GetPartitionFromVolume(string driveLetter, int diskNumber)
+    {
+        try
+        {
+            // Fallback to get volume info directly if partition enumeration failed
+            // This handles "Superfloppy" style disks (no partition table)
+            var output = ExecutePowerShell($@"
+                $vol = Get-Volume -DriveLetter {driveLetter.TrimEnd(':')} -ErrorAction SilentlyContinue
+                if ($vol) {{
+                    [PSCustomObject]@{{
+                        PartitionNumber = 1
+                        DriveLetter = $vol.DriveLetter
+                        Size = $vol.Size
+                        UsedSpace = $vol.Size - $vol.SizeRemaining
+                        Offset = 0
+                        Type = 'Basic'
+                        IsActive = $true
+                        GptType = $null
+                        Guid = $null
+                        FileSystem = $vol.FileSystem
+                        Label = $vol.FileSystemLabel
+                    }} | ConvertTo-Json
+                }}
+            ");
+
+            if (!string.IsNullOrWhiteSpace(output))
+            {
+                var item = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(output);
+                if (item != null)
+                {
+                    return new PartitionInfo
+                    {
+                        Index = 1,
+                        Letter = item.ContainsKey("DriveLetter") ? item["DriveLetter"].GetString() : null,
+                        Size = item.ContainsKey("Size") ? item["Size"].GetInt64() : 0,
+                        UsedSpace = item.ContainsKey("UsedSpace") ? item["UsedSpace"].GetInt64() : 0,
+                        Offset = 0,
+                        Type = "Basic",
+                        IsActive = true,
+                        Label = item.ContainsKey("Label") ? item["Label"].GetString() : null,
+                        FileSystem = item.ContainsKey("FileSystem") ? item["FileSystem"].GetString() : null,
+                        IsFixed = false // Assume data partition
+                    };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Error getting volume info fallback: {ex.Message}", Logger.LogLevel.Debug);
+        }
+        return null;
     }
 
     private static bool IsFixedPartition(PartitionInfo partition)
