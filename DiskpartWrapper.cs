@@ -9,17 +9,17 @@ namespace USBTools;
 public static class DiskpartWrapper
 {
     /// <summary>
-    /// Converts a disk to GPT and creates partitions using diskpart
+    /// Prepares a disk (MBR/GPT) and creates partitions using diskpart
     /// </summary>
-    public static void ConvertToGptAndCreatePartitions(int diskNumber, List<PartitionInfo> partitions)
+    public static void PrepareDiskAndCreatePartitions(int diskNumber, List<PartitionInfo> partitions, string partitionStyle)
     {
-        Logger.Log($"Using diskpart to convert disk {diskNumber} to GPT", Logger.LogLevel.Info);
+        Logger.Log($"Using diskpart to convert disk {diskNumber} to {partitionStyle}", Logger.LogLevel.Info);
         
         // Build diskpart script
         var script = new StringBuilder();
         script.AppendLine($"select disk {diskNumber}");
         script.AppendLine("clean");
-        // script.AppendLine("convert gpt");
+        script.AppendLine($"convert {partitionStyle.ToLower()}");
         
         // Create partitions
         int currentPartitionIndex = 1;
@@ -28,7 +28,28 @@ public static class DiskpartWrapper
             Logger.Log($"Creating partition {currentPartitionIndex} (Source Index: {partition.Index}, {partition.FileSystem})", Logger.LogLevel.Info);
             
             long sizeMB = partition.Size / (1024 * 1024);
-            script.AppendLine($"create partition primary size={sizeMB}");
+            
+            // Check if this is an EFI partition
+            bool isEfi = false;
+            if (partitionStyle.Equals("GPT", StringComparison.OrdinalIgnoreCase))
+            {
+                // Check by GPT Type GUID or if it's a fixed partition with FAT32 (heuristic)
+                if (string.Equals(partition.GptType, "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}", StringComparison.OrdinalIgnoreCase) ||
+                    (partition.IsFixed && partition.FileSystem.ToUpper() == "FAT32"))
+                {
+                    isEfi = true;
+                }
+            }
+
+            if (isEfi)
+            {
+                script.AppendLine($"create partition efi size={sizeMB}");
+            }
+            else
+            {
+                script.AppendLine($"create partition primary size={sizeMB}");
+            }
+
             // script.AppendLine($"select partition {currentPartitionIndex}"); // Removed to rely on implicit selection
             
             if (!string.IsNullOrEmpty(partition.DriveLetter))
@@ -40,7 +61,7 @@ public static class DiskpartWrapper
                 script.AppendLine($"assign");
             }
 
-            if (partition.IsActive)
+            if (partition.IsActive && partitionStyle.Equals("MBR", StringComparison.OrdinalIgnoreCase))
             {
                 script.AppendLine("active");
             }
@@ -57,7 +78,7 @@ public static class DiskpartWrapper
                 script.AppendLine($"format fs=ntfs{labelCmd} quick");
             }
             
-            Logger.Log($"Partition {partition.Index}: {sizeMB}MB, {partition.FileSystem}, Label='{partition.Label}'", Logger.LogLevel.Info);
+            Logger.Log($"Partition {partition.Index}: {sizeMB}MB, {partition.FileSystem}, Label='{partition.Label}'{(isEfi ? " [EFI]" : "")}", Logger.LogLevel.Info);
             currentPartitionIndex++;
         }
         

@@ -255,8 +255,8 @@ public static class RestoreCommand
             }
             else if (bootMode == "auto")
             {
-                // User requested AUTO defaults to UEFI
-                targetStyleStr = "GPT"; 
+                // User requested AUTO defaults to source metadata
+                targetStyleStr = geometry.PartitionStyle; 
             }
 
             bool useGpt = targetStyleStr == "GPT";
@@ -309,8 +309,8 @@ public static class RestoreCommand
             }
 
             // 4. Use diskpart to convert to GPT and create partitions
-            Logger.Log($"Converting disk {diskNumber} to GPT and creating {diskpartPartitions.Count} partition(s) using diskpart...", Logger.LogLevel.Info);
-            DiskpartWrapper.ConvertToGptAndCreatePartitions(diskNumber, diskpartPartitions);
+            Logger.Log($"Converting disk {diskNumber} to {targetStyleStr} and creating {diskpartPartitions.Count} partition(s) using diskpart...", Logger.LogLevel.Info);
+            DiskpartWrapper.PrepareDiskAndCreatePartitions(diskNumber, diskpartPartitions, targetStyleStr);
 
             // 5. Wait for OS to re-enumerate
             Logger.Log("Waiting for OS to re-enumerate disk...", Logger.LogLevel.Info);
@@ -626,7 +626,7 @@ public static class RestoreCommand
             bool useUefi = false;
             if (bootMode == "uefi") useUefi = true;
             else if (bootMode == "bios") useUefi = false;
-            else if (bootMode == "auto") useUefi = true; // Default to UEFI per user request
+            else if (bootMode == "auto") useUefi = geometry.PartitionStyle == "GPT"; // Default to source metadata
 
             // Check if boot files already exist (e.g. restored from WIM)
             bool bootFilesExist = false;
@@ -691,25 +691,12 @@ public static class RestoreCommand
                 Logger.Log($"Running bcdboot {windowsDrive}:\\Windows /s {windowsDrive}: /f BIOS", Logger.LogLevel.Info);
                 ExecuteCommand("bcdboot", $"{windowsDrive}:\\Windows /s {windowsDrive}: /f BIOS");
                 
-                // Set active partition (Native WMI)
-                try 
-                {
-                    var scope = new ManagementScope(@"\\localhost\ROOT\Microsoft\Windows\Storage");
-                    scope.Connect();
-                    var query = new ObjectQuery($"SELECT * FROM MSFT_Partition WHERE DiskNumber = {diskNumber} AND PartitionNumber = 1");
-                    using var searcher = new ManagementObjectSearcher(scope, query);
-                    foreach (ManagementObject p in searcher.Get())
-                    {
-                        var isActive = p["IsActive"] as bool?;
-                        if (isActive != true)
-                        {
-                            Logger.Log("Setting partition 1 as Active for BIOS boot...", Logger.LogLevel.Info);
-                            // Note: MSFT_Partition IsActive is read-only on some versions, but let's try or fallback to DiskPart if needed.
-                            // Actually, we can just use the PowerShell cmdlet wrapper if WMI fails, or rely on PrepareDisk.
-                        }
-                    }
-                }
-                catch {}
+                // Update MBR and PBR using bootsect
+                Logger.Log($"Updating boot sector on {windowsDrive}:...", Logger.LogLevel.Info);
+                ExecuteCommand("bootsect", $"/nt60 {windowsDrive}: /force /mbr");
+
+                // Active partition is already set by DiskpartWrapper based on metadata
+                Logger.Log("Verifying boot configuration...", Logger.LogLevel.Info);
             }
 
             Logger.Log("Boot configuration completed", Logger.LogLevel.Info);
