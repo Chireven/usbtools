@@ -1,0 +1,40 @@
+[2025-11-30 20:22:00] [Info] === USB Tools Session Started ===
+[2025-11-30 20:22:00] [Info] Log file: d:\usbwim.log
+[2025-11-30 20:22:00] [Info] Starting restore operation
+[2025-11-30 20:22:00] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 20:22:00] [Info] Target Drive: g:
+[2025-11-30 20:22:00] [Info] Provider: auto
+[2025-11-30 20:22:00] [Info] Boot Mode: auto
+[2025-11-30 20:22:00] [Info] Target Disk: 2
+[2025-11-30 20:22:00] [Info] Reading WIM metadata...
+[2025-11-30 20:22:00] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 20:22:02] [Info] Disk 2 validated as USB drive
+[2025-11-30 20:22:02] [Info] Preparing disk...
+[2025-11-30 20:22:02] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 20:22:02] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 20:22:02] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 20:22:02] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 20:22:02] [Info] Target partition style: GPT
+[2025-11-30 20:22:02] [Info] Parameters: Disk=2, BootMode=auto, TargetStyle=GPT
+[2025-11-30 20:22:02] [Info] Setting partition layout with 2 partition(s) using native IOCTL...
+[2025-11-30 20:22:02] [Info] Opening \\.\PHYSICALDRIVE2 for partition layout configuration...
+[2025-11-30 20:22:02] [Info] Deleting existing partition table...
+[2025-11-30 20:22:02] [Warning] Warning: Failed to delete drive layout. Error: 24
+[2025-11-30 20:22:02] [Info] 
+[2025-11-30 20:22:02] [Info] ================================================================================
+[2025-11-30 20:22:02] [Info] IMPORTANT: To complete the disk reset, please:
+[2025-11-30 20:22:02] [Info]   1. Physically UNPLUG the USB drive from PhysicalDrive2
+[2025-11-30 20:22:02] [Info]   2. Wait 5 seconds
+[2025-11-30 20:22:02] [Info]   3. REPLUG the USB drive
+[2025-11-30 20:22:02] [Info]   4. Press any key to continue...
+[2025-11-30 20:22:02] [Info] ================================================================================
+[2025-11-30 20:22:02] [Info] 
+[2025-11-30 20:22:10] [Info] User confirmed drive has been reinserted. Continuing...
+[2025-11-30 20:22:13] [Info] Setting GPT partition layout with 2 partition(s)...
+[2025-11-30 20:22:13] [Error] Native Disk Preparation Failed: Failed to set drive layout. Error: 122
+   at USBTools.NativeDiskManager.SetPartitionLayout(Int32 diskNumber, List`1 partitions, Boolean useGpt) in D:\GitHub\usbtools\NativeDiskManager.cs:line 354
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 284
+[2025-11-30 20:22:13] [Error] Restore operation failed: Failed to set drive layout. Error: 122
+   at USBTools.NativeDiskManager.SetPartitionLayout(Int32 diskNumber, List`1 partitions, Boolean useGpt) in D:\GitHub\usbtools\NativeDiskManager.cs:line 354
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 284
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90

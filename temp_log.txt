@@ -1,0 +1,130 @@
+[2025-11-30 18:50:35] [Info] === USB Tools Session Started ===
+[2025-11-30 18:50:35] [Info] Starting restore operation
+[2025-11-30 18:50:35] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 18:50:35] [Info] Target Drive: g:
+[2025-11-30 18:50:35] [Info] Provider: auto
+[2025-11-30 18:50:35] [Info] Boot Mode: auto
+[2025-11-30 18:50:35] [Info] Target Disk: 2
+[2025-11-30 18:50:35] [Info] Reading WIM metadata...
+[2025-11-30 18:50:35] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 18:50:36] [Info] Disk 2 validated as USB drive
+[2025-11-30 18:50:36] [Info] Preparing disk...
+[2025-11-30 18:50:37] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 18:50:37] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 18:50:37] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 18:50:37] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 18:50:37] [Info] Clearing Disk 2...
+[2025-11-30 18:50:43] [Info] Initializing Disk 2 as GPT...
+[2025-11-30 18:50:43] [Warning] Initialize failed with 41001 (Already Initialized). Verifying disk state...
+[2025-11-30 18:50:43] [Error] Native WMI Disk Preparation Failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+[2025-11-30 18:50:43] [Error] Restore operation failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90
+[2025-11-30 18:51:05] [Info] === USB Tools Session Started ===
+[2025-11-30 18:51:06] [Info] Starting restore operation
+[2025-11-30 18:51:06] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 18:51:06] [Info] Target Drive: g:
+[2025-11-30 18:51:06] [Info] Provider: auto
+[2025-11-30 18:51:06] [Info] Boot Mode: auto
+[2025-11-30 18:51:06] [Info] Target Disk: 2
+[2025-11-30 18:51:06] [Info] Reading WIM metadata...
+[2025-11-30 18:51:06] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 18:51:08] [Info] Disk 2 validated as USB drive
+[2025-11-30 18:51:08] [Info] Preparing disk...
+[2025-11-30 18:51:08] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 18:51:08] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 18:51:08] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 18:51:08] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 18:51:08] [Info] Clearing Disk 2...
+[2025-11-30 18:51:14] [Info] Initializing Disk 2 as GPT...
+[2025-11-30 18:51:14] [Warning] Initialize failed with 41001 (Already Initialized). Verifying disk state...
+[2025-11-30 18:51:14] [Error] Native WMI Disk Preparation Failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+[2025-11-30 18:51:14] [Error] Restore operation failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90
+[2025-11-30 18:51:39] [Info] === USB Tools Session Started ===
+[2025-11-30 18:53:46] [Info] === USB Tools Session Started ===
+[2025-11-30 18:53:46] [Info] Starting restore operation
+[2025-11-30 18:53:46] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 18:53:46] [Info] Target Drive: g:
+[2025-11-30 18:53:46] [Info] Provider: auto
+[2025-11-30 18:53:46] [Info] Boot Mode: auto
+[2025-11-30 18:53:46] [Info] Target Disk: 2
+[2025-11-30 18:53:46] [Info] Reading WIM metadata...
+[2025-11-30 18:53:46] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 18:53:48] [Info] Disk 2 validated as USB drive
+[2025-11-30 18:53:48] [Info] Preparing disk...
+[2025-11-30 18:53:48] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 18:53:48] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 18:53:48] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 18:53:48] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 18:53:48] [Info] Clearing Disk 2...
+[2025-11-30 18:53:54] [Info] Initializing Disk 2 as GPT...
+[2025-11-30 18:53:54] [Warning] Initialize failed with 41001 (Already Initialized). Verifying disk state...
+[2025-11-30 18:53:54] [Error] Native WMI Disk Preparation Failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+[2025-11-30 18:53:54] [Error] Restore operation failed: Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Clear operation may have failed. Original Error: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 295
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90
+[2025-11-30 18:56:25] [Info] === USB Tools Session Started ===
+[2025-11-30 18:56:25] [Info] Starting restore operation
+[2025-11-30 18:56:25] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 18:56:25] [Info] Target Drive: g:
+[2025-11-30 18:56:25] [Info] Provider: auto
+[2025-11-30 18:56:25] [Info] Boot Mode: auto
+[2025-11-30 18:56:25] [Info] Target Disk: 2
+[2025-11-30 18:56:25] [Info] Reading WIM metadata...
+[2025-11-30 18:56:25] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 18:56:27] [Info] Disk 2 validated as USB drive
+[2025-11-30 18:56:27] [Info] Preparing disk...
+[2025-11-30 18:56:27] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 18:56:27] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 18:56:27] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 18:56:27] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 18:56:27] [Info] Clearing Disk 2...
+[2025-11-30 18:56:27] [Error] Native WMI Disk Preparation Failed: Not found 
+   at System.Management.ManagementException.ThrowWithExtendedInfo(ManagementStatus errorCode)
+   at System.Management.PropertyData.RefreshPropertyInfo()
+   at System.Management.PropertyData..ctor(ManagementBaseObject parent, String propName)
+   at System.Management.PropertyDataCollection.get_Item(String propertyName)
+   at System.Management.ManagementBaseObject.SetPropertyValue(String propertyName, Object propertyValue)
+   at System.Management.ManagementBaseObject.set_Item(String propertyName, Object value)
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 238
+[2025-11-30 18:56:27] [Error] Restore operation failed: Not found 
+   at System.Management.ManagementException.ThrowWithExtendedInfo(ManagementStatus errorCode)
+   at System.Management.PropertyData.RefreshPropertyInfo()
+   at System.Management.PropertyData..ctor(ManagementBaseObject parent, String propName)
+   at System.Management.PropertyDataCollection.get_Item(String propertyName)
+   at System.Management.ManagementBaseObject.SetPropertyValue(String propertyName, Object propertyValue)
+   at System.Management.ManagementBaseObject.set_Item(String propertyName, Object value)
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 238
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90
+[2025-11-30 19:02:44] [Info] === USB Tools Session Started ===
+[2025-11-30 19:02:44] [Info] Starting restore operation
+[2025-11-30 19:02:44] [Info] Source WIM: D:\test.usbwim
+[2025-11-30 19:02:44] [Info] Target Drive: g:
+[2025-11-30 19:02:44] [Info] Provider: auto
+[2025-11-30 19:02:44] [Info] Boot Mode: auto
+[2025-11-30 19:02:44] [Info] Target Disk: 2
+[2025-11-30 19:02:44] [Info] Reading WIM metadata...
+[2025-11-30 19:02:44] [Info] Validating disk 2 is a USB drive...
+[2025-11-30 19:02:45] [Info] Disk 2 validated as USB drive
+[2025-11-30 19:02:45] [Info] Preparing disk...
+[2025-11-30 19:02:45] [Info] Target Disk Size: 30,976,404,480 bytes
+[2025-11-30 19:02:45] [Info] Source Image Size: 30,976,404,480 bytes
+[2025-11-30 19:02:46] [Info] Resizing partition 2 (FAT32) to fill disk.
+[2025-11-30 19:02:46] [Info] Preparing Disk 2 using Native WMI...
+[2025-11-30 19:02:46] [Info] Clearing Disk 2...
+[2025-11-30 19:02:51] [Info] Initializing Disk 2 as GPT...
+[2025-11-30 19:02:51] [Warning] Initialize failed with 41001 (Already Initialized). Verifying disk state...
+[2025-11-30 19:02:51] [Warning] Disk is initialized as 1 (1=MBR, 2=GPT) but requested 2. Attempting force re-clear...
+[2025-11-30 19:02:57] [Info] Retrying initialization as GPT...
+[2025-11-30 19:02:57] [Error] Native WMI Disk Preparation Failed: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.InvokeWmiMethod(ManagementObject obj, String methodName, ManagementBaseObject inParams) in D:\GitHub\usbtools\RestoreCommand.cs:line 431
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 302
+[2025-11-30 19:02:57] [Error] Restore operation failed: WMI Method Initialize failed with return code 41001
+   at USBTools.RestoreCommand.InvokeWmiMethod(ManagementObject obj, String methodName, ManagementBaseObject inParams) in D:\GitHub\usbtools\RestoreCommand.cs:line 431
+   at USBTools.RestoreCommand.PrepareDisk(Int32 diskNumber, DriveGeometry geometry, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 302
+   at USBTools.RestoreCommand.ExecuteAsync(String sourceWim, String targetDrive, String diskNumberStr, Boolean autoYes, String provider, String bootMode) in D:\GitHub\usbtools\RestoreCommand.cs:line 90

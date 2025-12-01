@@ -37,6 +37,11 @@ public static class DismWrapper
         return ExecuteDism(arguments);
     }
 
+    public static Task<bool> ApplyImageAsync(string wimPath, int imageIndex, string targetPath)
+    {
+        return Task.Run(() => ApplyImage(wimPath, imageIndex, targetPath));
+    }
+
     public static bool SetImageDescription(string wimPath, int imageIndex, string description)
     {
         Logger.Log("Using DISM fallback to set image description", Logger.LogLevel.Warning);

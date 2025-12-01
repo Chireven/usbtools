@@ -38,7 +38,25 @@ public static class WimApi
     public const uint WIM_INFO_ATTRIBUTES = 1;
     public const uint WIM_INFO_COMPRESSION = 2;
 
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
+    // WIM Message Constants
+    public const uint WIM_MSG_TEXT = 0x9400;
+    public const uint WIM_MSG_PROGRESS = 0x9401;
+    public const uint WIM_MSG_PROCESS = 0x9402;
+    public const uint WIM_MSG_SCANNING = 0x9403;
+    public const uint WIM_MSG_SETRANGE = 0x9404;
+    public const uint WIM_MSG_SETPOS = 0x9405;
+    public const uint WIM_MSG_STEPIT = 0x9406;
+    public const uint WIM_MSG_COMPRESS = 0x9407;
+    public const uint WIM_MSG_ERROR = 0x9408;
+    public const uint WIM_MSG_ALIGNMENT = 0x9409;
+    public const uint WIM_MSG_RETRY = 0x940A;
+    public const uint WIM_MSG_SPLIT = 0x940B;
+    public const uint WIM_MSG_FILEINFO = 0x940C;
+    public const uint WIM_MSG_INFO = 0x940D;
+    public const uint WIM_MSG_WARNING = 0x940E;
+    public const uint WIM_MSG_CHK_PROCESS = 0x940F;
+
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern IntPtr WIMCreateFile(
         string wimPath,
         uint desiredAccess,
@@ -48,40 +66,47 @@ public static class WimApi
         out uint creationResult);
 
     [DllImport(WimgapiDll, SetLastError = true)]
-    public static extern bool WIMCloseHandle(IntPtr handle);
+    public static extern bool WIMCloseHandle(IntPtr wimHandle);
 
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool WIMSetReferenceFile(
+        IntPtr wimHandle,
+        string path,
+        uint mode);
+
+    [DllImport(WimgapiDll, SetLastError = true)]
+    public static extern bool WIMGetImageInformation(
+        IntPtr wimHandle,
+        out IntPtr imageInfo,
+        out uint sizeOfImageInfo);
+
+    [DllImport(WimgapiDll, SetLastError = true)]
     public static extern IntPtr WIMLoadImage(
         IntPtr wimHandle,
         uint imageIndex);
 
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern IntPtr WIMCaptureImage(
-        IntPtr wimHandle,
-        string path,
-        uint captureFlags);
-
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool WIMApplyImage(
         IntPtr imageHandle,
         string path,
         uint applyFlags);
 
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr WIMCaptureImage(
+        IntPtr wimHandle,
+        string path,
+        uint captureFlags);
+
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool WIMSetImageInformation(
         IntPtr imageHandle,
-        string imageInfo);
-
-    [DllImport(WimgapiDll, SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern bool WIMGetImageInformation(
-        IntPtr wimHandle,
-        out IntPtr imageInfo,
-        out uint imageInfoSize);
+        IntPtr imageInfo,
+        uint sizeOfImageInfo);
 
     [DllImport(WimgapiDll, SetLastError = true)]
     public static extern uint WIMGetImageCount(IntPtr wimHandle);
 
-    [DllImport(WimgapiDll, SetLastError = true)]
+    [DllImport(WimgapiDll, CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool WIMSetTemporaryPath(
         IntPtr wimHandle,
         string tempPath);
@@ -103,8 +128,6 @@ public static class WimApi
     public static extern bool WIMUnregisterMessageCallback(
         IntPtr wimHandle,
         WIMMessageCallback callback);
-
-
 
     public static bool IsAvailable()
     {

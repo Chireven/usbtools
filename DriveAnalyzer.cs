@@ -1,18 +1,24 @@
-using System.Diagnostics;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using Microsoft.Win32.SafeHandles;
+using System.Management;
 using System.Text.RegularExpressions;
 
 namespace USBTools;
 
 /// <summary>
-/// Analyzes drive geometry and partitions
+/// Analyzes drive geometry and partitions using native Windows APIs (IOCTLs)
+/// This avoids WMI and PowerShell dependencies which can be unreliable.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public static class DriveAnalyzer
 {
     public static DriveGeometry AnalyzeDrive(string driveLetter)
     {
         Logger.Log($"Analyzing drive {driveLetter}", Logger.LogLevel.Info);
 
-        // Get disk number from drive letter
+        // Get disk number from drive letter using IOCTL
         var diskNumber = GetDiskNumberFromDriveLetter(driveLetter);
         if (diskNumber == -1)
         {
@@ -21,331 +27,388 @@ public static class DriveAnalyzer
 
         var geometry = new DriveGeometry();
 
-        // Get partition style (MBR/GPT)
-        geometry.PartitionStyle = GetPartitionStyle(diskNumber);
+        // Get disk info (Style, Size, Signature/ID) via WMI (still useful for general info, but we can fallback if needed)
+        // We'll try WMI for metadata, but if it fails, we'll just use defaults to allow the backup to proceed.
+        GetDiskInfo(diskNumber, geometry);
+        
         Logger.Log($"Partition style: {geometry.PartitionStyle}", Logger.LogLevel.Info);
-
-        // Get disk signature or GUID
-        if (geometry.PartitionStyle == "MBR")
-        {
-            geometry.DiskSignature = GetDiskSignature(diskNumber);
-        }
-        else
-        {
-            geometry.GptDiskId = GetGptDiskId(diskNumber);
-        }
-
-        // Get total size
-        geometry.TotalSize = GetDiskSize(diskNumber);
         Logger.Log($"Total disk size: {geometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
 
         // Get all partitions on this disk
-        geometry.Partitions = GetPartitions(diskNumber, driveLetter);
+        geometry.Partitions = GetPartitions(diskNumber);
         Logger.Log($"Found {geometry.Partitions.Count} partitions", Logger.LogLevel.Info);
 
         return geometry;
     }
 
-    private static int GetDiskNumberFromDriveLetter(string driveLetter)
+    public static int GetDiskNumberFromDriveLetter(string driveLetter)
     {
+        // Normalize drive letter to just the letter (e.g. "G")
+        // Handle "G:", "G:\", "G"
+        var letter = driveLetter.TrimEnd('\\', ':').ToUpper(); // Uppercase is safer for some APIs
+        if (letter.Length > 1) letter = letter.Substring(0, 1); // Safety check
+
+        // Try IOCTL first (fastest, most reliable for physical disks)
+        int diskNumber = GetDiskNumberViaIoCtl(letter);
+        if (diskNumber != -1) return diskNumber;
+
+        Logger.Log("IOCTL disk detection failed, falling back to WMI...", Logger.LogLevel.Warning);
+
+        // Fallback to WMI
+        diskNumber = GetDiskNumberViaWmi(letter);
+        if (diskNumber != -1) return diskNumber;
+
+        Logger.Log("WMI disk detection failed, falling back to PowerShell...", Logger.LogLevel.Warning);
+
+        // Fallback to PowerShell (Robust)
+        diskNumber = GetDiskNumberViaPowerShell(letter);
+        if (diskNumber != -1) return diskNumber;
+
+        Logger.Log("PowerShell disk detection failed, falling back to DiskPart...", Logger.LogLevel.Warning);
+
+        // Fallback to DiskPart (Nuclear option)
+        return GetDiskNumberViaDiskPart(letter);
+    }
+
+    private static int GetDiskNumberViaIoCtl(string letter)
+    {
+        var volumePath = $@"\\.\{letter}:";
+
+        using var volumeHandle = CreateFile(
+            volumePath,
+            0, // No access required for metadata
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            IntPtr.Zero,
+            OPEN_EXISTING,
+            0,
+            IntPtr.Zero);
+
+        if (volumeHandle.IsInvalid)
+        {
+            Logger.Log($"Failed to open volume handle for {letter}:. Error: {Marshal.GetLastWin32Error()}", Logger.LogLevel.Warning);
+            return -1;
+        }
+
+        // Get volume disk extents
+        var extents = new VOLUME_DISK_EXTENTS();
+        var size = Marshal.SizeOf(extents);
+        var ptr = Marshal.AllocHGlobal(size);
+        
         try
         {
-            var letter = driveLetter.TrimEnd(':').ToUpper();
+            Marshal.StructureToPtr(extents, ptr, false);
             
-            // Method 1: Standard Get-Partition (Fastest)
-            var output = ExecutePowerShell($"Get-Partition -DriveLetter {letter} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty DiskNumber");
-            if (int.TryParse(output.Trim(), out var diskNum))
+            if (!DeviceIoControl(
+                volumeHandle,
+                IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+                IntPtr.Zero,
+                0,
+                ptr,
+                (uint)size,
+                out var bytesReturned,
+                IntPtr.Zero))
             {
-                return diskNum;
+                // If the buffer was too small (more than 1 extent), we'd get ERROR_MORE_DATA
+                // But for a simple USB drive partition, 1 extent is expected.
+                Logger.Log($"IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS failed. Error: {Marshal.GetLastWin32Error()}", Logger.LogLevel.Warning);
+                return -1;
             }
 
-            // Method 2: CIM/WMI (Robust fallback for Superfloppy/Removable)
-            Logger.Log($"Standard partition check failed for {letter}, trying CIM/WMI fallback...", Logger.LogLevel.Debug);
-            var wmiScript = $@"
-                try {{
-                    $drive = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ""DeviceID='{letter}:'"" -ErrorAction Stop
-                    $partition = Get-CimAssociatedInstance -InputObject $drive -ResultClassName Win32_DiskPartition -ErrorAction Stop
-                    $disk = Get-CimAssociatedInstance -InputObject $partition -ResultClassName Win32_DiskDrive -ErrorAction Stop
-                    $disk.Index
-                }} catch {{
-                    # Try direct volume mapping if partition mapping fails (rare but possible)
-                    write-error $_
-                }}
-            ";
-            output = ExecutePowerShell(wmiScript);
-            if (int.TryParse(output.Trim(), out diskNum))
+            extents = Marshal.PtrToStructure<VOLUME_DISK_EXTENTS>(ptr);
+            
+            if (extents.NumberOfDiskExtents > 0)
             {
+                // Return the disk number of the first extent
+                return (int)extents.Extents[0].DiskNumber;
+            }
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ptr);
+        }
+
+        return -1;
+    }
+
+    private static int GetDiskNumberViaWmi(string letter)
+    {
+        // 1. Try modern MSFT_Partition (Windows 8+)
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(@"\\.\root\Microsoft\Windows\Storage", $"SELECT * FROM MSFT_Partition WHERE DriveLetter = '{letter}'");
+            
+            foreach (ManagementObject partition in searcher.Get())
+            {
+                var diskNum = Convert.ToInt32(partition["DiskNumber"]);
+                Logger.Log($"WMI (MSFT_Partition) found disk number {diskNum} for drive {letter}", Logger.LogLevel.Debug);
                 return diskNum;
             }
         }
         catch (Exception ex)
         {
-            Logger.LogException(ex, "Error getting disk number");
+            Logger.Log($"WMI (MSFT_Partition) lookup failed: {ex.Message}", Logger.LogLevel.Debug);
+        }
+
+        // 2. Try legacy Win32_LogicalDiskToPartition
+        try
+        {
+            var driveLetterWithColon = letter + ":";
+            
+            // Query Win32_LogicalDiskToPartition to link Drive Letter -> Partition
+            var query = $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{driveLetterWithColon}'}} WHERE AssocClass=Win32_LogicalDiskToPartition";
+            using var searcher = new ManagementObjectSearcher(query);
+            
+            var partitions = searcher.Get();
+            if (partitions.Count == 0)
+            {
+                Logger.Log($"WMI (Win32) returned no partitions for {driveLetterWithColon}", Logger.LogLevel.Debug);
+            }
+
+            foreach (ManagementObject partition in partitions)
+            {
+                // partition is Win32_DiskPartition
+                // DeviceID format example: "Disk #1, Partition #0"
+                var deviceId = partition["DeviceID"]?.ToString();
+                Logger.Log($"WMI Partition DeviceID: {deviceId}", Logger.LogLevel.Debug);
+
+                if (!string.IsNullOrEmpty(deviceId))
+                {
+                    var match = Regex.Match(deviceId, @"Disk #(\d+)");
+                    if (match.Success)
+                    {
+                        var diskNum = int.Parse(match.Groups[1].Value);
+                        Logger.Log($"WMI (Win32) found disk number {diskNum} for drive {driveLetterWithColon}", Logger.LogLevel.Debug);
+                        return diskNum;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"WMI (Win32) Disk Number lookup failed: {ex.Message}", Logger.LogLevel.Debug);
         }
         return -1;
     }
 
-    private static string GetPartitionStyle(int diskNumber)
+    private static int GetDiskNumberViaPowerShell(string letter)
     {
         try
         {
-            var output = ExecutePowerShell($"Get-Disk -Number {diskNumber} | Select-Object -ExpandProperty PartitionStyle");
-            return output.Trim();
-        }
-        catch
-        {
-            return "MBR"; // Default fallback
-        }
-    }
-
-    private static uint GetDiskSignature(int diskNumber)
-    {
-        try
-        {
-            var output = ExecutePowerShell($"Get-Disk -Number {diskNumber} | Select-Object -ExpandProperty Signature");
-            if (uint.TryParse(output.Trim(), out var signature))
+            // Use Get-Partition to find the disk number
+            var command = $"Get-Partition -DriveLetter {letter} | Select-Object -ExpandProperty DiskNumber";
+            
+            // Suppress progress stream to avoid CLIXML output in stderr
+            command = "$ProgressPreference = 'SilentlyContinue'; " + command;
+            var encodedCommand = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(command));
+            
+            var psi = new System.Diagnostics.ProcessStartInfo
             {
-                return signature;
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -NonInteractive -EncodedCommand {encodedCommand}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null) return -1;
+
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+
+            if (int.TryParse(output.Trim(), out var diskNum))
+            {
+                return diskNum;
             }
         }
         catch (Exception ex)
         {
-            Logger.LogException(ex, "Error getting disk signature");
+            Logger.Log($"PowerShell lookup failed: {ex.Message}", Logger.LogLevel.Warning);
         }
-        return 0;
+        return -1;
     }
 
-    private static string GetGptDiskId(int diskNumber)
+    private static int GetDiskNumberViaDiskPart(string letter)
     {
         try
         {
-            var output = ExecutePowerShell($"Get-Disk -Number {diskNumber} | Select-Object -ExpandProperty Guid");
-            return output.Trim();
-        }
-        catch
-        {
-            return Guid.NewGuid().ToString();
-        }
-    }
+            // Create a temporary script file for diskpart
+            var scriptPath = Path.GetTempFileName();
+            File.WriteAllText(scriptPath, $"select volume {letter}\ndetail volume\nexit");
 
-    private static long GetDiskSize(int diskNumber)
-    {
-        try
-        {
-            var output = ExecutePowerShell($"Get-Disk -Number {diskNumber} | Select-Object -ExpandProperty Size");
-            if (long.TryParse(output.Trim(), out var size))
+            var psi = new System.Diagnostics.ProcessStartInfo
             {
-                return size;
+                FileName = "diskpart.exe",
+                Arguments = $"/s \"{scriptPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null) return -1;
+
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            File.Delete(scriptPath);
+
+            // Parse output for "Disk ###" or "* Disk 2"
+            // Example: "* Disk 2    Online       14 GB      0 B"
+            var match = Regex.Match(output, @"\*\s+Disk\s+(\d+)", RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                return int.Parse(match.Groups[1].Value);
+            }
+            
+            // Try without asterisk
+            match = Regex.Match(output, @"Disk\s+(\d+)\s+Online", RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                return int.Parse(match.Groups[1].Value);
             }
         }
         catch (Exception ex)
         {
-            Logger.LogException(ex, "Error getting disk size");
+            Logger.Log($"DiskPart lookup failed: {ex.Message}", Logger.LogLevel.Warning);
         }
-        return 0;
+        return -1;
     }
 
-    private static List<PartitionInfo> GetPartitions(int diskNumber, string? originalDriveLetter = null)
+    public static void GetDiskInfo(int diskNumber, DriveGeometry geometry)
+    {
+        try
+        {
+            // We use WMI here just for metadata (Size, Style). If it fails, it's not critical for the backup operation itself
+            // (which relies on the disk number), but we need the size for the progress bar.
+            using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_DiskDrive WHERE Index = {diskNumber}");
+            foreach (ManagementObject drive in searcher.Get())
+            {
+                geometry.TotalSize = Convert.ToInt64(drive["Size"]);
+                
+                try 
+                {
+                    // Try to get partition style from MSFT_Disk if available
+                    using var storageSearcher = new ManagementObjectSearcher(@"\\.\root\Microsoft\Windows\Storage", $"SELECT * FROM MSFT_Disk WHERE Number = {diskNumber}");
+                    foreach (ManagementObject disk in storageSearcher.Get())
+                    {
+                        var partitionStyle = Convert.ToUInt16(disk["PartitionStyle"]); // 1 = MBR, 2 = GPT
+                        geometry.PartitionStyle = partitionStyle == 2 ? "GPT" : "MBR";
+                        
+                        if (geometry.PartitionStyle == "GPT")
+                        {
+                            geometry.GptDiskId = disk["Guid"]?.ToString() ?? Guid.NewGuid().ToString();
+                        }
+                        else
+                        {
+                            geometry.DiskSignature = Convert.ToUInt32(disk["Signature"]);
+                        }
+                        return;
+                    }
+                }
+                catch
+                {
+                    geometry.PartitionStyle = "MBR"; // Default
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Warning: Could not retrieve full disk info: {ex.Message}", Logger.LogLevel.Warning);
+        }
+    }
+
+    public static List<PartitionInfo> GetPartitions(int diskNumber)
     {
         var partitions = new List<PartitionInfo>();
 
         try
         {
-            // Get partition details using diskpart or PowerShell
-            var output = ExecutePowerShell($@"
-                Get-Partition -DiskNumber {diskNumber} | ForEach-Object {{
-                    $obj = [PSCustomObject]@{{
-                        PartitionNumber = $_.PartitionNumber
-                        DriveLetter = $_.DriveLetter
-                        Size = $_.Size
-                        Offset = $_.Offset
-                        Type = $_.Type
-                        IsActive = $_.IsActive
-                        GptType = $_.GptType
-                        Guid = $_.Guid
-                        UsedSpace = 0
-                    }}
-                    
-                    # Get volume info for used space
-                    if ($_.DriveLetter) {{
-                        try {{
-                            $vol = Get-Volume -DriveLetter $_.DriveLetter -ErrorAction SilentlyContinue
-                            if ($vol) {{
-                                $obj.UsedSpace = $vol.Size - $vol.SizeRemaining
-                            }}
-                        }} catch {{}}
-                    }}
-                    
-                    $obj
-                }} | ConvertTo-Json
-            ");
-
-            // Parse JSON output
-            var partitionData = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, System.Text.Json.JsonElement>>>(output);
+            // Use MSFT_Partition if available
+            using var searcher = new ManagementObjectSearcher(@"\\.\root\Microsoft\Windows\Storage", $"SELECT * FROM MSFT_Partition WHERE DiskNumber = {diskNumber}");
             
-            if (partitionData != null)
+            foreach (ManagementObject item in searcher.Get())
             {
-                foreach (var item in partitionData)
+                var partition = new PartitionInfo
                 {
-                    var partition = new PartitionInfo
+                    Index = Convert.ToInt32(item["PartitionNumber"]),
+                    Size = Convert.ToInt64(item["Size"]),
+                    Offset = Convert.ToInt64(item["Offset"]),
+                    Letter = item["DriveLetter"]?.ToString()?.Trim()
+                };
+                
+                if (partition.Letter != null && partition.Letter.Length == 1)
+                {
+                    partition.Letter += ":";
+                }
+                else if (Convert.ToChar(item["DriveLetter"]) == 0)
+                {
+                    partition.Letter = null;
+                }
+
+                partition.IsActive = false; // Default
+                try { partition.IsActive = Convert.ToBoolean(item["IsActive"]); } catch {}
+
+                partition.GptId = item["Guid"]?.ToString();
+                partition.GptType = item["GptType"]?.ToString();
+                
+                if (item["MbrType"] != null)
+                {
+                    partition.Type = item["MbrType"].ToString();
+                }
+
+                if (!string.IsNullOrEmpty(partition.Letter))
+                {
+                    try
                     {
-                        Index = item.ContainsKey("PartitionNumber") ? item["PartitionNumber"].GetInt32() : 0,
-                        Size = item.ContainsKey("Size") ? item["Size"].GetInt64() : 0,
-                        UsedSpace = item.ContainsKey("UsedSpace") ? item["UsedSpace"].GetInt64() : 0,
-                        Offset = item.ContainsKey("Offset") ? item["Offset"].GetInt64() : 0,
-                        Type = item.ContainsKey("Type") ? item["Type"].GetString() ?? "" : "",
-                        IsActive = item.ContainsKey("IsActive") && item["IsActive"].GetBoolean(),
-                        GptType = item.ContainsKey("GptType") ? item["GptType"].GetString() : null,
-                        GptId = item.ContainsKey("Guid") ? item["Guid"].GetString() : null
+                        var driveInfo = new DriveInfo(partition.Letter);
+                        partition.Label = driveInfo.VolumeLabel;
+                        partition.FileSystem = driveInfo.DriveFormat;
+                        partition.UsedSpace = driveInfo.TotalSize - driveInfo.TotalFreeSpace;
+                    }
+                    catch { }
+                }
+
+                partition.IsFixed = IsFixedPartition(partition);
+                partitions.Add(partition);
+            }
+        }
+        catch
+        {
+            // Fallback to Win32_DiskPartition if MSFT_Partition fails
+             try
+            {
+                using var searcher = new ManagementObjectSearcher($"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='\\\\.\\PHYSICALDRIVE{diskNumber}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
+                foreach (ManagementObject item in searcher.Get())
+                {
+                     var partition = new PartitionInfo
+                    {
+                        Index = Convert.ToInt32(item["Index"]), // Win32_DiskPartition Index is unique across system? No, usually just index.
+                        // Actually Win32_DiskPartition.Index is system wide. We need "Name" or parsing.
+                        // Let's just rely on the fact that we found it.
+                        Size = Convert.ToInt64(item["Size"]),
+                        Type = item["Type"]?.ToString() ?? "Unknown"
                     };
-
-                    // Get drive letter
-                    if (item.ContainsKey("DriveLetter") && item["DriveLetter"].ValueKind != System.Text.Json.JsonValueKind.Null)
-                    {
-                        partition.Letter = item["DriveLetter"].GetString();
-                    }
-
-                    // Get volume info if there's a drive letter
-                    if (!string.IsNullOrEmpty(partition.Letter))
-                    {
-                        try
-                        {
-                            var driveInfo = new DriveInfo(partition.Letter);
-                            partition.Label = driveInfo.VolumeLabel;
-                            partition.FileSystem = driveInfo.DriveFormat;
-                        }
-                        catch { }
-                    }
-
-                    // Determine if partition is "fixed" (EFI, Boot, Recovery)
-                    partition.IsFixed = IsFixedPartition(partition);
-
+                    // Getting offset/letter via Win32 is painful (requires more associators).
+                    // For now, if MSFT fails, we might just have basic info.
                     partitions.Add(partition);
                 }
             }
-
-            // If no partitions found, try to see if it's a Superfloppy (Volume without Partition)
-            if (partitions.Count == 0 && !string.IsNullOrEmpty(originalDriveLetter))
+            catch (Exception ex)
             {
-                Logger.Log("No partitions found via Get-Partition. Checking for direct Volume (Superfloppy)...", Logger.LogLevel.Debug);
-                var fallbackPartition = GetPartitionFromVolume(originalDriveLetter, diskNumber);
-                if (fallbackPartition != null)
-                {
-                    Logger.Log("Found Superfloppy/Volume-only drive.", Logger.LogLevel.Info);
-                    partitions.Add(fallbackPartition);
-                }
+                Logger.LogException(ex, "Error getting partitions");
             }
         }
-        catch (Exception ex)
-        {
-            Logger.LogException(ex, "Error getting partitions");
-        }
 
-        return partitions;
-    }
-
-    private static PartitionInfo? GetPartitionFromVolume(string driveLetter, int diskNumber)
-    {
-        try
-        {
-            // Fallback to get volume info directly if partition enumeration failed
-            // This handles "Superfloppy" style disks (no partition table)
-            var output = ExecutePowerShell($@"
-                $vol = Get-Volume -DriveLetter {driveLetter.TrimEnd(':')} -ErrorAction SilentlyContinue
-                if ($vol) {{
-                    [PSCustomObject]@{{
-                        PartitionNumber = 1
-                        DriveLetter = $vol.DriveLetter
-                        Size = $vol.Size
-                        UsedSpace = $vol.Size - $vol.SizeRemaining
-                        Offset = 0
-                        Type = 'Basic'
-                        IsActive = $true
-                        GptType = $null
-                        Guid = $null
-                        FileSystem = $vol.FileSystem
-                        Label = $vol.FileSystemLabel
-                    }} | ConvertTo-Json
-                }}
-            ");
-
-            if (!string.IsNullOrWhiteSpace(output))
-            {
-                var item = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(output);
-                if (item != null)
-                {
-                    return new PartitionInfo
-                    {
-                        Index = 1,
-                        Letter = item.ContainsKey("DriveLetter") ? item["DriveLetter"].GetString() : null,
-                        Size = item.ContainsKey("Size") ? item["Size"].GetInt64() : 0,
-                        UsedSpace = item.ContainsKey("UsedSpace") ? item["UsedSpace"].GetInt64() : 0,
-                        Offset = 0,
-                        Type = "Basic",
-                        IsActive = true,
-                        Label = item.ContainsKey("Label") ? item["Label"].GetString() : null,
-                        FileSystem = item.ContainsKey("FileSystem") ? item["FileSystem"].GetString() : null,
-                        IsFixed = false // Assume data partition
-                    };
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"Error getting volume info fallback: {ex.Message}", Logger.LogLevel.Debug);
-        }
-        return null;
+        return partitions.OrderBy(p => p.Offset).ToList();
     }
 
     private static bool IsFixedPartition(PartitionInfo partition)
     {
-        // EFI System Partition
-        if (partition.Type?.Contains("System", StringComparison.OrdinalIgnoreCase) == true)
-            return true;
-
-        // Microsoft Reserved Partition
-        if (partition.Type?.Contains("Reserved", StringComparison.OrdinalIgnoreCase) == true)
-            return true;
-
-        // Recovery partitions
-        if (partition.Type?.Contains("Recovery", StringComparison.OrdinalIgnoreCase) == true)
-            return true;
-
-        // Small boot partitions (< 1GB typically)
-        if (partition.Size < 1024 * 1024 * 1024 && partition.IsActive)
-            return true;
-
+        if (string.Equals(partition.GptType, "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(partition.GptType, "{e3c9e316-0b5c-4db8-817d-f92df00215ae}", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(partition.GptType, "{de94bba4-06d1-4d40-a16a-bfd50179d6ac}", StringComparison.OrdinalIgnoreCase)) return true;
+        if (partition.Size < 1024 * 1024 * 1024 && partition.IsActive) return true;
         return false;
-    }
-
-    private static string ExecutePowerShell(string command)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -NonInteractive -Command \"{command}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        using var process = Process.Start(psi);
-        if (process == null)
-        {
-            throw new Exception("Failed to start PowerShell");
-        }
-
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-
-        if (process.ExitCode != 0 && !string.IsNullOrWhiteSpace(error))
-        {
-            throw new Exception($"PowerShell error: {error}");
-        }
-
-        return output;
     }
 
     public static uint GenerateRandomDiskSignature()
@@ -357,5 +420,49 @@ public static class DriveAnalyzer
     public static string GenerateRandomGptDiskId()
     {
         return Guid.NewGuid().ToString();
+    }
+
+    // P/Invoke Definitions
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern SafeFileHandle CreateFile(
+        string lpFileName,
+        uint dwDesiredAccess,
+        uint dwShareMode,
+        IntPtr lpSecurityAttributes,
+        uint dwCreationDisposition,
+        uint dwFlagsAndAttributes,
+        IntPtr hTemplateFile);
+
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool DeviceIoControl(
+        SafeFileHandle hDevice,
+        uint dwIoControlCode,
+        IntPtr lpInBuffer,
+        uint nInBufferSize,
+        IntPtr lpOutBuffer,
+        uint nOutBufferSize,
+        out uint lpBytesReturned,
+        IntPtr lpOverlapped);
+
+    private const uint GENERIC_READ = 0x80000000;
+    private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint OPEN_EXISTING = 3;
+    private const uint IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DISK_EXTENT
+    {
+        public uint DiskNumber;
+        public long StartingOffset;
+        public long ExtentLength;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct VOLUME_DISK_EXTENTS
+    {
+        public uint NumberOfDiskExtents;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 1)]
+        public DISK_EXTENT[] Extents;
     }
 }

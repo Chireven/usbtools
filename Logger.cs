@@ -6,12 +6,29 @@ public static class Logger
 {
     private static string? _logFilePath;
     private static readonly object _lock = new();
+    private static bool _isFirstWrite = true;
     public static bool DebugMode { get; set; } = false;
 
-    public static void Initialize(string logFileName = "usbtools.log")
+    public static void Initialize(string? logFilePath = null)
     {
-        _logFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, logFileName);
+        if (string.IsNullOrEmpty(logFilePath))
+        {
+            _logFilePath = Path.Combine(Environment.CurrentDirectory, "usbtools.log");
+        }
+        else
+        {
+            _logFilePath = Path.IsPathRooted(logFilePath) 
+                ? logFilePath 
+                : Path.Combine(Environment.CurrentDirectory, logFilePath);
+        }
+        
+        _isFirstWrite = true; // Reset for new session
+        
         Log("=== USB Tools Session Started ===", LogLevel.Info);
+        if (_logFilePath != null)
+        {
+            Log($"Log file: {_logFilePath}", LogLevel.Info);
+        }
     }
 
     public enum LogLevel
@@ -52,7 +69,15 @@ public static class Logger
             {
                 try
                 {
-                    File.AppendAllText(_logFilePath, logMessage + Environment.NewLine);
+                    if (_isFirstWrite)
+                    {
+                        File.WriteAllText(_logFilePath, logMessage + Environment.NewLine);
+                        _isFirstWrite = false;
+                    }
+                    else
+                    {
+                        File.AppendAllText(_logFilePath, logMessage + Environment.NewLine);
+                    }
                 }
                 catch
                 {
