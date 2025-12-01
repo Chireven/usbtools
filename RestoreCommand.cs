@@ -8,7 +8,7 @@ namespace USBTools;
 
 public static class RestoreCommand
 {
-    public static async Task<int> ExecuteAsync(string sourceWim, string targetDrive, string diskNumberStr, bool autoYes, string provider, string bootMode)
+    public static async Task<int> ExecuteAsync(string sourceWim, string targetDrive, string diskNumberStr, bool autoYes, string provider, string bootMode, bool forceBoot = false)
     {
         try
         {
@@ -18,6 +18,7 @@ public static class RestoreCommand
             if (!string.IsNullOrEmpty(diskNumberStr)) Logger.Log($"Target Disk Number: {diskNumberStr}", Logger.LogLevel.Info);
             Logger.Log($"Provider: {provider}", Logger.LogLevel.Info);
             Logger.Log($"Boot Mode: {bootMode}", Logger.LogLevel.Info);
+            if (forceBoot) Logger.Log("Force Boot: Enabled", Logger.LogLevel.Warning);
 
             int diskNumber;
             if (!string.IsNullOrEmpty(diskNumberStr))
@@ -123,7 +124,7 @@ public static class RestoreCommand
             }
 
             // 4. Make Bootable
-            await MakeBootableAsync(diskNumber, geometry, bootMode);
+            await MakeBootableAsync(diskNumber, geometry, bootMode, forceBoot);
 
             Logger.Log("Restore operation completed successfully", Logger.LogLevel.Info);
             return 0;
@@ -184,7 +185,18 @@ public static class RestoreCommand
                                 {
                                     descStart += "<DESCRIPTION>".Length;
                                     var json = xmlInfo.Substring(descStart, descEnd - descStart);
-                                    return DriveGeometry.FromJson(json);
+                                    // Unescape XML entities
+                                    json = json.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&");
+                                    
+                                    Logger.Log($"WIM Metadata JSON: {json}", Logger.LogLevel.Debug);
+                                    
+                                    var geometry = DriveGeometry.FromJson(json);
+                                    if (geometry != null)
+                                    {
+                                        Logger.Log($"Image Tool Version: {geometry.ToolVersion}", Logger.LogLevel.Info);
+                                        // Future: Check version compatibility here
+                                    }
+                                    return geometry;
                                 }
                             }
                         }
@@ -253,7 +265,21 @@ public static class RestoreCommand
 
             // 3. Prepare partition info for diskpart
             var diskpartPartitions = new List<DiskpartWrapper.PartitionInfo>();
-            foreach (var partition in geometry.Partitions.OrderBy(p => p.Index))
+            
+            // Calculate available drive letters (Z down to C)
+            // We blacklist A and B to avoid issues with antivirus software and legacy assumptions
+            var usedLetters = DriveInfo.GetDrives().Select(d => d.Name[0]).ToHashSet();
+            var availableLetters = new Stack<char>();
+            for (char c = 'Z'; c >= 'C'; c--)
+            {
+                if (!usedLetters.Contains(c)) availableLetters.Push(c);
+            }
+            
+            // CRITICAL: Sort by Offset to ensure we create partitions in the same physical order as the source.
+            // This ensures that the first partition created gets the first physical location, etc.
+            var sortedPartitions = geometry.Partitions.OrderBy(p => p.Offset).ToList();
+
+            foreach (var partition in sortedPartitions)
             {
                 long partitionSize = partition.Size;
                 
@@ -265,11 +291,20 @@ public static class RestoreCommand
                     partitionSize = diskSize - usedSpace - (useGpt ? 2 * 1024 * 1024 : 1024 * 1024); // Reserve space for GPT headers
                 }
 
+                string assignedLetter = "";
+                if (availableLetters.Count > 0)
+                {
+                    assignedLetter = availableLetters.Pop().ToString();
+                }
+
                 diskpartPartitions.Add(new DiskpartWrapper.PartitionInfo
                 {
                     Index = partition.Index,
                     Size = partitionSize,
-                    FileSystem = partition.FileSystem
+                    FileSystem = partition.FileSystem,
+                    Label = partition.Label,
+                    DriveLetter = assignedLetter,
+                    IsActive = partition.IsActive
                 });
             }
 
@@ -300,8 +335,8 @@ public static class RestoreCommand
 
                 if (letter != null && letter != '\0')
                 {
-                    Logger.Log($"Formatting partition {partNumber} (drive {letter}:) as {geometryPartition.FileSystem}...", Logger.LogLevel.Info);
-                    FormatVolumeWmi(scope, letter.ToString(), geometryPartition.FileSystem, geometryPartition.Label);
+                    Logger.Log($"Partition {partNumber} (drive {letter}:) verified.", Logger.LogLevel.Info);
+                    // FormatVolumeWmi(scope, letter.ToString(), geometryPartition.FileSystem, geometryPartition.Label); // Removed redundant format
                 }
                 else
                 {
@@ -459,24 +494,31 @@ public static class RestoreCommand
             try
             {
                 // Register callback for progress
+                // Register callback for progress
+                int lastPercent = 0;
                 WimApi.WIMMessageCallback callback = (msgId, wParam, lParam, userData) =>
                 {
                     if (msgId == WimApi.WIM_MSG_PROGRESS)
                     {
                         var percent = (int)wParam;
-                        if (percent % 10 == 0) Console.Write(".");
+                        // Log every 10%
+                        if (percent > lastPercent && percent % 10 == 0)
+                        {
+                            Logger.Log($"Applying Image {imageIndex}: {percent}% completed", Logger.LogLevel.Info);
+                            lastPercent = percent;
+                        }
                     }
                     return 0; // WIM_MSG_SUCCESS
                 };
 
                 WimApi.WIMRegisterMessageCallback(imageHandle, callback, IntPtr.Zero);
 
-                Console.Write($"Applying Image {imageIndex} ");
+                Logger.Log($"Applying Image {imageIndex}...", Logger.LogLevel.Info);
                 if (!WimApi.WIMApplyImage(imageHandle, targetDrive, 0))
                 {
                     throw new Exception($"Failed to apply image {imageIndex}. Error: {Marshal.GetLastWin32Error()}");
                 }
-                Console.WriteLine(" Done.");
+                Logger.Log($"Image {imageIndex} applied successfully.", Logger.LogLevel.Info);
 
                 WimApi.WIMUnregisterMessageCallback(imageHandle, callback);
             }
@@ -496,9 +538,28 @@ public static class RestoreCommand
 
         for (int i = 1; i <= imageCount && i <= driveLetters.Count; i++)
         {
-            var targetDrive = $"{driveLetters[i - 1]}:";
+            var letter = driveLetters[i - 1];
+            var targetDrive = $"{letter}:\\"; // Ensure trailing backslash
             Logger.Log($"Applying image {i} to {targetDrive}...", Logger.LogLevel.Info);
             
+            // Wait for volume to be accessible
+            bool isReady = false;
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                if (Directory.Exists(targetDrive))
+                {
+                    isReady = true;
+                    break;
+                }
+                Logger.Log($"Waiting for {targetDrive} to become accessible (Attempt {attempt + 1}/10)...", Logger.LogLevel.Debug);
+                await Task.Delay(1000);
+            }
+
+            if (!isReady)
+            {
+                throw new DirectoryNotFoundException($"Target drive {targetDrive} is not accessible after waiting.");
+            }
+
             await DismWrapper.ApplyImageAsync(wimPath, i, targetDrive);
         }
     }
@@ -548,7 +609,7 @@ public static class RestoreCommand
         return letters;
     }
 
-    private static async Task MakeBootableAsync(int diskNumber, DriveGeometry geometry, string bootMode)
+    private static async Task MakeBootableAsync(int diskNumber, DriveGeometry geometry, string bootMode, bool forceBoot)
     {
         Logger.Log("Configuring boot...", Logger.LogLevel.Info);
 
@@ -561,20 +622,66 @@ public static class RestoreCommand
                 return;
             }
 
-            // Find Windows partition (usually the largest or last partition)
-            var windowsDrive = driveLetters.Last();
-            
             // Determine boot style
             bool useUefi = false;
             if (bootMode == "uefi") useUefi = true;
             else if (bootMode == "bios") useUefi = false;
             else if (bootMode == "auto") useUefi = true; // Default to UEFI per user request
+
+            // Check if boot files already exist (e.g. restored from WIM)
+            bool bootFilesExist = false;
+            string? efiDrive = null;
+            foreach (var letter in driveLetters)
+            {
+                if (Directory.Exists($"{letter}:\\EFI") || File.Exists($"{letter}:\\bootmgr"))
+                {
+                    Logger.Log($"Boot files detected on {letter}: (EFI/bootmgr).", Logger.LogLevel.Info);
+                    bootFilesExist = true;
+                    
+                    // If UEFI, we might still want to ensure the EFI partition is identified for logging
+                    if (Directory.Exists($"{letter}:\\EFI")) efiDrive = letter;
+                }
+            }
+
+            if (bootFilesExist)
+            {
+                if (forceBoot)
+                {
+                    Logger.Log("Force Boot enabled: Proceeding with bcdboot generation despite existing boot files.", Logger.LogLevel.Warning);
+                }
+                else
+                {
+                    Logger.Log("Skipping bcdboot generation (files exist). Use --force-boot to override.", Logger.LogLevel.Info);
+                    return;
+                }
+            }
+
+            // Fallback: Try to find Windows partition for bcdboot (Full OS scenario)
+            string? windowsDrive = null;
+            foreach (var letter in driveLetters)
+            {
+                if (Directory.Exists($"{letter}:\\Windows\\System32"))
+                {
+                    windowsDrive = letter;
+                    Logger.Log($"Found Windows on {letter}:", Logger.LogLevel.Info);
+                    break;
+                }
+            }
+
+            if (windowsDrive == null)
+            {
+                Logger.Log("Warning: Could not locate Windows partition to generate boot files. Assuming image is already bootable or non-OS.", Logger.LogLevel.Warning);
+                return;
+            }
+
+            if (efiDrive == null && useUefi)
+            {
+                // If only one partition, it might be both
+                efiDrive = windowsDrive;
+            }
             
             if (useUefi)
             {
-                // For GPT/UEFI, find EFI partition and Windows partition
-                var efiDrive = driveLetters.Count > 1 ? driveLetters.First() : windowsDrive;
-                
                 Logger.Log($"Running bcdboot {windowsDrive}:\\Windows /s {efiDrive}: /f UEFI", Logger.LogLevel.Info);
                 ExecuteCommand("bcdboot", $"{windowsDrive}:\\Windows /s {efiDrive}: /f UEFI");
             }

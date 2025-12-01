@@ -21,16 +21,6 @@ class Program
             }
         }
 
-        // Initialize logger
-        Logger.Initialize(logFile);
-
-        // Check for global debug flag
-        if (args.Contains("--debug") || args.Contains("-v"))
-        {
-            Logger.DebugMode = true;
-            Logger.Log("Debug mode enabled", Logger.LogLevel.Debug);
-        }
-
         // Banner with colors
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("╔════════════════════════════╗");
@@ -44,6 +34,16 @@ class Program
         Console.WriteLine($"Build Date: {buildDate:yyyy-MM-dd HH:mm:ss}");
         Console.ResetColor();
         Console.WriteLine();
+
+        // Initialize logger
+        Logger.Initialize(logFile);
+
+        // Check for global debug flag
+        if (args.Contains("--debug") || args.Contains("-v"))
+        {
+            Logger.DebugMode = true;
+            Logger.Log("Debug mode enabled", Logger.LogLevel.Debug);
+        }
 
         if (args.Length == 0)
         {
@@ -174,6 +174,7 @@ class Program
         bool autoYes = false;
         string provider = "auto";
         string bootMode = "auto";
+        bool forceBoot = false;
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -210,6 +211,10 @@ class Program
                     Console.ResetColor();
                     return 1;
                 }
+            }
+            else if (arg == "--force-boot" || arg == "-f")
+            {
+                forceBoot = true;
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -259,7 +264,7 @@ class Program
         }
         source = resolvedSource;
 
-        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider, bootMode);
+        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider, bootMode, forceBoot);
     }
 
     private static async Task<int> ExecuteTestAsync(string[] args)
@@ -458,6 +463,10 @@ class Program
         Console.Write("  -b, --boot-mode <mode>    ");
         Console.ResetColor();
         Console.WriteLine("Boot mode: uefi, bios, auto (default)");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -f, --force-boot          ");
+        Console.ResetColor();
+        Console.WriteLine("Force bcdboot generation even if boot files exist");
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -v, --debug               ");
         Console.ResetColor();

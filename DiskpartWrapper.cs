@@ -22,22 +22,43 @@ public static class DiskpartWrapper
         // script.AppendLine("convert gpt");
         
         // Create partitions
+        int currentPartitionIndex = 1;
         foreach (var partition in partitions)
         {
+            Logger.Log($"Creating partition {currentPartitionIndex} (Source Index: {partition.Index}, {partition.FileSystem})", Logger.LogLevel.Info);
+            
             long sizeMB = partition.Size / (1024 * 1024);
             script.AppendLine($"create partition primary size={sizeMB}");
-             script.AppendLine($"assign");
+            // script.AppendLine($"select partition {currentPartitionIndex}"); // Removed to rely on implicit selection
+            
+            if (!string.IsNullOrEmpty(partition.DriveLetter))
+            {
+                script.AppendLine($"assign letter={partition.DriveLetter.TrimEnd(':')}");
+            }
+            else
+            {
+                script.AppendLine($"assign");
+            }
+
+            if (partition.IsActive)
+            {
+                script.AppendLine("active");
+            }
+            
 
             if (partition.FileSystem.ToUpper() == "FAT32")
             {
-                script.AppendLine("format fs=fat32 quick");
+                var labelCmd = string.IsNullOrEmpty(partition.Label) ? "" : $" label=\"{partition.Label}\"";
+                script.AppendLine($"format fs=fat32{labelCmd} quick");
             }
             else if (partition.FileSystem.ToUpper() == "NTFS")
             {
-                script.AppendLine("format fs=ntfs quick");
+                var labelCmd = string.IsNullOrEmpty(partition.Label) ? "" : $" label=\"{partition.Label}\"";
+                script.AppendLine($"format fs=ntfs{labelCmd} quick");
             }
             
-            Logger.Log($"Partition {partition.Index}: {sizeMB}MB, {partition.FileSystem}", Logger.LogLevel.Info);
+            Logger.Log($"Partition {partition.Index}: {sizeMB}MB, {partition.FileSystem}, Label='{partition.Label}'", Logger.LogLevel.Info);
+            currentPartitionIndex++;
         }
         
         script.AppendLine("exit");
@@ -124,5 +145,8 @@ public static class DiskpartWrapper
         public int Index { get; set; }
         public long Size { get; set; }
         public string FileSystem { get; set; } = "";
+        public string Label { get; set; } = "";
+        public string DriveLetter { get; set; } = "";
+        public bool IsActive { get; set; }
     }
 }

@@ -5,6 +5,9 @@ namespace USBTools;
 
 public class DriveGeometry
 {
+    [JsonPropertyName("toolVersion")]
+    public string ToolVersion { get; set; } = "1.0.0";
+
     [JsonPropertyName("partitionStyle")]
     public string PartitionStyle { get; set; } = ""; // MBR or GPT
 
