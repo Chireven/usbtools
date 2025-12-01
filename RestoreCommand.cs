@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Management;
 
@@ -123,6 +124,15 @@ public static class RestoreCommand
                 await ApplyWithDismAsync(sourceWim, geometry, diskNumber);
             }
 
+            var useUefi = bootMode switch
+            {
+                "uefi" => true,
+                "bios" => false,
+                _ => geometry.PartitionStyle.Equals("GPT", StringComparison.OrdinalIgnoreCase)
+            };
+
+            ValidateRestoredLayout(geometry, diskNumber, useUefi);
+
             // 4. Make Bootable
             await MakeBootableAsync(diskNumber, geometry, bootMode, forceBoot);
 
@@ -138,81 +148,250 @@ public static class RestoreCommand
 
     private static void ResizePartitionsForTarget(int diskNumber, DriveGeometry geometry)
     {
+        const long gptOverheadBytes = 2 * 1024 * 1024;   // Reserve space for GPT headers/footers
+        const long mbrOverheadBytes = 1 * 1024 * 1024;   // Leave a little room for the MBR
+        const long elasticSafetyPadding = 256L * 1024 * 1024; // Add headroom when shrinking partitions
+
         var targetGeometry = new DriveGeometry();
         DriveAnalyzer.GetDiskInfo(diskNumber, targetGeometry);
-        
+
+        geometry.TotalSize = targetGeometry.TotalSize; // Keep metadata aligned with the target
+
         Logger.Log($"Target Disk Size: {targetGeometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
         Logger.Log($"Source Image Size: {geometry.TotalSize:N0} bytes", Logger.LogLevel.Info);
 
-        // Identify the last partition to expand/shrink
-        var lastPartition = geometry.Partitions.OrderByDescending(p => p.Offset).FirstOrDefault();
-        if (lastPartition != null)
+        long overhead = geometry.PartitionStyle.Equals("GPT", StringComparison.OrdinalIgnoreCase)
+            ? gptOverheadBytes
+            : mbrOverheadBytes;
+
+        var fixedPartitions = geometry.Partitions.Where(p => p.IsFixed).OrderBy(p => p.Offset).ToList();
+        var elasticPartitions = geometry.Partitions.Where(p => !p.IsFixed).OrderBy(p => p.Offset).ToList();
+
+        long fixedTotal = fixedPartitions.Sum(p => p.Size);
+        long sourceElasticTotal = Math.Max(1, elasticPartitions.Sum(p => p.Size)); // avoid div-by-zero later
+
+        // Calculate the minimum viable size for elastic partitions (used space + padding)
+        var minElasticSizes = elasticPartitions
+            .Select(p => Math.Max(p.UsedSpace + elasticSafetyPadding, p.UsedSpace))
+            .ToList();
+
+        long minimumRequired = fixedTotal + minElasticSizes.Sum() + overhead;
+        if (minimumRequired > targetGeometry.TotalSize)
         {
-            Logger.Log($"Resizing partition {lastPartition.Index} ({lastPartition.FileSystem}) to fill disk.", Logger.LogLevel.Info);
-            lastPartition.Size = -1; // Flag for UseMaximumSize
+            Logger.Log(
+                $"Error: Target disk is too small. Requires at least {minimumRequired:N0} bytes but only {targetGeometry.TotalSize:N0} are available.",
+                Logger.LogLevel.Error);
+            throw new InvalidOperationException("Target disk is smaller than the captured image requirements.");
+        }
+
+        // If there are no elastic partitions, we cannot safely resize. Leave sizes intact but warn about leftover space.
+        if (!elasticPartitions.Any())
+        {
+            long unused = targetGeometry.TotalSize - fixedTotal - overhead;
+            if (unused < 0)
+            {
+                Logger.Log(
+                    "Error: No elastic partitions available and fixed partitions exceed target disk capacity.",
+                    Logger.LogLevel.Error);
+                throw new InvalidOperationException("Unable to fit fixed partitions onto target disk.");
+            }
+
+            Logger.Log(
+                $"No elastic partitions detected; proceeding with fixed sizes. Unallocated space: {unused:N0} bytes.",
+                Logger.LogLevel.Warning);
+            return;
+        }
+
+        long availableForElastic = targetGeometry.TotalSize - fixedTotal - overhead;
+        long remaining = availableForElastic;
+
+        for (int i = 0; i < elasticPartitions.Count; i++)
+        {
+            var partition = elasticPartitions[i];
+            long minSize = minElasticSizes[i];
+
+            long proportional = (long)Math.Floor((double)partition.Size / sourceElasticTotal * availableForElastic);
+            long allocated = Math.Max(minSize, proportional);
+
+            // Ensure remaining partitions can still meet their minima
+            long remainingMin = minElasticSizes.Skip(i + 1).Sum();
+            if (allocated + remainingMin > remaining)
+            {
+                allocated = remaining - remainingMin;
+            }
+
+            // Last partition takes the rest to avoid rounding losses
+            if (i == elasticPartitions.Count - 1)
+            {
+                allocated = remaining;
+            }
+
+            partition.Size = allocated;
+            remaining -= allocated;
+
+            Logger.Log(
+                $"Partition {partition.Index} resized to {allocated:N0} bytes (min {minSize:N0}).",
+                Logger.LogLevel.Info);
         }
     }
 
     private static DriveGeometry? GetGeometryFromWim(string wimPath)
     {
         Logger.Log("Reading WIM metadata...", Logger.LogLevel.Info);
-        
-        // Try WIM API first if available
-        if (WimApi.IsAvailable())
-        {
-            try
-            {
-                IntPtr wimHandle = WimApi.WIMCreateFile(
-                    wimPath,
-                    WimApi.GENERIC_READ,
-                    WimApi.WIM_OPEN_EXISTING,
-                    0,
-                    0,
-                    out _);
 
-                if (wimHandle != IntPtr.Zero)
+        var geometry = TryGetGeometryWithWimApi(wimPath);
+        if (geometry != null)
+        {
+            return geometry;
+        }
+
+        geometry = TryGetGeometryWithDism(wimPath);
+        if (geometry != null)
+        {
+            return geometry;
+        }
+
+        geometry = TryGetGeometryFromManifest(wimPath);
+        if (geometry != null)
+        {
+            return geometry;
+        }
+
+        return null;
+    }
+
+    private static DriveGeometry? TryGetGeometryWithWimApi(string wimPath)
+    {
+        if (!WimApi.IsAvailable()) return null;
+
+        try
+        {
+            IntPtr wimHandle = WimApi.WIMCreateFile(
+                wimPath,
+                WimApi.GENERIC_READ,
+                WimApi.WIM_OPEN_EXISTING,
+                0,
+                0,
+                out _);
+
+            if (wimHandle != IntPtr.Zero)
+            {
+                try
                 {
-                    try
+                    if (WimApi.WIMGetImageInformation(wimHandle, out var infoPtr, out var infoSize))
                     {
-                        if (WimApi.WIMGetImageInformation(wimHandle, out var infoPtr, out var infoSize))
+                        var xmlInfo = Marshal.PtrToStringUni(infoPtr, (int)infoSize / 2);
+                        if (!string.IsNullOrEmpty(xmlInfo))
                         {
-                            var xmlInfo = Marshal.PtrToStringUni(infoPtr, (int)infoSize / 2);
-                            if (!string.IsNullOrEmpty(xmlInfo))
+                            var descStart = xmlInfo.IndexOf("<DESCRIPTION>");
+                            var descEnd = xmlInfo.IndexOf("</DESCRIPTION>");
+                            if (descStart != -1 && descEnd != -1)
                             {
-                                var descStart = xmlInfo.IndexOf("<DESCRIPTION>");
-                                var descEnd = xmlInfo.IndexOf("</DESCRIPTION>");
-                                if (descStart != -1 && descEnd != -1)
+                                descStart += "<DESCRIPTION>".Length;
+                                var json = xmlInfo.Substring(descStart, descEnd - descStart);
+                                // Unescape XML entities
+                                json = json.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&");
+
+                                Logger.Log($"WIM Metadata JSON: {json}", Logger.LogLevel.Debug);
+
+                                var geometry = DriveGeometry.FromJson(json);
+                                if (geometry != null)
                                 {
-                                    descStart += "<DESCRIPTION>".Length;
-                                    var json = xmlInfo.Substring(descStart, descEnd - descStart);
-                                    // Unescape XML entities
-                                    json = json.Replace("&lt;", "<").Replace("&gt;", ">").Replace("&amp;", "&");
-                                    
-                                    Logger.Log($"WIM Metadata JSON: {json}", Logger.LogLevel.Debug);
-                                    
-                                    var geometry = DriveGeometry.FromJson(json);
-                                    if (geometry != null)
-                                    {
-                                        Logger.Log($"Image Tool Version: {geometry.ToolVersion}", Logger.LogLevel.Info);
-                                        // Future: Check version compatibility here
-                                    }
-                                    return geometry;
+                                    Logger.Log($"Image Tool Version: {geometry.ToolVersion}", Logger.LogLevel.Info);
                                 }
+                                return geometry;
                             }
                         }
                     }
-                    finally
-                    {
-                        WimApi.WIMCloseHandle(wimHandle);
-                    }
+                }
+                finally
+                {
+                    WimApi.WIMCloseHandle(wimHandle);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Warning: Failed to read metadata with WIM API: {ex.Message}", Logger.LogLevel.Warning);
+        }
+
+        return null;
+    }
+
+    private static DriveGeometry? TryGetGeometryWithDism(string wimPath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "dism.exe",
+                Arguments = $"/Get-WimInfo /WimFile:\"{wimPath}\" /Index:1",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null) return null;
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                Logger.Log($"DISM metadata stderr: {error}", Logger.LogLevel.Warning);
+            }
+
+            var match = Regex.Match(output, @"Description\s*:\s*(.+)");
+            if (match.Success)
+            {
+                var json = match.Groups[1].Value.Trim();
+                var geometry = DriveGeometry.FromJson(json);
+                if (geometry != null)
+                {
+                    Logger.Log("Read metadata via DISM fallback", Logger.LogLevel.Info);
+                }
+                return geometry;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Warning: Failed to read metadata with DISM: {ex.Message}", Logger.LogLevel.Warning);
+        }
+
+        return null;
+    }
+
+    private static DriveGeometry? TryGetGeometryFromManifest(string wimPath)
+    {
+        var manifestCandidates = new List<string>
+        {
+            wimPath + ".manifest.json",
+            Path.ChangeExtension(wimPath, ".json")
+        };
+
+        foreach (var path in manifestCandidates)
+        {
+            if (!File.Exists(path)) continue;
+
+            try
+            {
+                var json = File.ReadAllText(path);
+                var geometry = DriveGeometry.FromJson(json);
+                if (geometry != null)
+                {
+                    Logger.Log($"Read metadata from sidecar manifest: {path}", Logger.LogLevel.Info);
+                    return geometry;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log($"Warning: Failed to read metadata with WIM API: {ex.Message}", Logger.LogLevel.Warning);
+                Logger.Log($"Warning: Failed to read manifest {path}: {ex.Message}", Logger.LogLevel.Warning);
             }
         }
-        
+
         return null;
     }
 
@@ -292,9 +471,18 @@ public static class RestoreCommand
                 }
 
                 string assignedLetter = "";
-                if (availableLetters.Count > 0)
+                if (!string.IsNullOrWhiteSpace(partition.Letter))
+                {
+                    assignedLetter = partition.Letter.TrimEnd(':', '\\');
+                }
+                else if (availableLetters.Count > 0)
                 {
                     assignedLetter = availableLetters.Pop().ToString();
+                }
+
+                if (useGpt && assignedLetter == "" && string.Equals(partition.GptType, "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}", StringComparison.OrdinalIgnoreCase))
+                {
+                    assignedLetter = "S"; // Reserve a predictable letter for EFI if nothing else is assigned
                 }
 
                 diskpartPartitions.Add(new DiskpartWrapper.PartitionInfo
@@ -304,7 +492,10 @@ public static class RestoreCommand
                     FileSystem = partition.FileSystem,
                     Label = partition.Label,
                     DriveLetter = assignedLetter,
-                    IsActive = partition.IsActive
+                    IsActive = partition.IsActive,
+                    GptType = partition.GptType,
+                    GptId = partition.GptId,
+                    IsFixed = partition.IsFixed
                 });
             }
 
@@ -324,11 +515,13 @@ public static class RestoreCommand
             var partQuery = new ObjectQuery($"SELECT * FROM MSFT_Partition WHERE DiskNumber = {diskNumber}");
             using var partSearcher = new ManagementObjectSearcher(scope, partQuery);
             
+            var usedLetters = DriveInfo.GetDrives().Select(d => d.Name[0]).ToHashSet();
+
             foreach (ManagementObject partObj in partSearcher.Get())
             {
                 var partNumber = (uint)partObj["PartitionNumber"];
                 var letter = partObj["DriveLetter"] as char?;
-                
+
                 // Find matching partition from geometry
                 var geometryPartition = geometry.Partitions.FirstOrDefault(p => p.Index == partNumber);
                 if (geometryPartition == null) continue;
@@ -336,18 +529,36 @@ public static class RestoreCommand
                 if (letter != null && letter != '\0')
                 {
                     Logger.Log($"Partition {partNumber} (drive {letter}:) verified.", Logger.LogLevel.Info);
-                    // FormatVolumeWmi(scope, letter.ToString(), geometryPartition.FileSystem, geometryPartition.Label); // Removed redundant format
                 }
                 else
                 {
-                    Logger.Log($"Warning: Partition {partNumber} has no drive letter assigned.", Logger.LogLevel.Warning);
+                    var preferredLetter = geometryPartition.Letter?.TrimEnd(':', '\\');
+                    if (useGpt && string.IsNullOrWhiteSpace(preferredLetter) && string.Equals(geometryPartition.GptType, "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        preferredLetter = "S";
+                    }
+
+                    var nextLetter = !string.IsNullOrWhiteSpace(preferredLetter)
+                        ? preferredLetter
+                        : GetNextFreeLetter(usedLetters);
+
+                    if (!string.IsNullOrWhiteSpace(nextLetter))
+                    {
+                        AssignPartitionLetter(diskNumber, partNumber, nextLetter);
+                        usedLetters.Add(nextLetter[0]);
+                        Logger.Log($"Partition {partNumber} assigned drive letter {nextLetter} for accessibility.", Logger.LogLevel.Info);
+                    }
+                    else
+                    {
+                        Logger.Log($"Warning: Partition {partNumber} has no drive letter assigned and none are available.", Logger.LogLevel.Warning);
+                    }
                 }
             }
         }
         catch (Exception ex)
         {
             Logger.LogException(ex, "Native Disk Preparation Failed");
-            throw; 
+            throw;
         }
     }
 
@@ -704,6 +915,119 @@ public static class RestoreCommand
         catch (Exception ex)
         {
             Logger.LogException(ex, "Error configuring boot (may not be a bootable image)");
+        }
+    }
+
+    private static void ValidateRestoredLayout(DriveGeometry geometry, int diskNumber, bool useUefi)
+    {
+        Logger.Log("Validating restored layout...", Logger.LogLevel.Info);
+
+        var scope = new ManagementScope(@"\\localhost\ROOT\Microsoft\Windows\Storage");
+        scope.Connect();
+
+        var partitionQuery = new ObjectQuery($"SELECT * FROM MSFT_Partition WHERE DiskNumber = {diskNumber}");
+        using var partSearcher = new ManagementObjectSearcher(scope, partitionQuery);
+
+        var parts = new List<ManagementObject>();
+        foreach (ManagementObject part in partSearcher.Get()) parts.Add(part);
+
+        if (parts.Count != geometry.Partitions.Count)
+        {
+            throw new InvalidOperationException($"Partition count mismatch. Expected {geometry.Partitions.Count}, found {parts.Count} on disk.");
+        }
+
+        const long sizeTolerance = 10L * 1024 * 1024; // 10MB tolerance to accommodate rounding
+        string? efiLetter = null;
+
+        foreach (var geoPart in geometry.Partitions)
+        {
+            var partObj = parts.FirstOrDefault(p => (uint)p["PartitionNumber"] == geoPart.Index);
+            if (partObj == null) throw new InvalidOperationException($"Partition {geoPart.Index} not found after creation.");
+
+            var actualSize = (long)(UInt64)partObj["Size"];
+            if (Math.Abs(actualSize - geoPart.Size) > sizeTolerance && geoPart.Size > 0)
+            {
+                throw new InvalidOperationException($"Partition {geoPart.Index} size mismatch. Expected {geoPart.Size}, found {actualSize}.");
+            }
+
+            var actualGptType = partObj["GptType"] as string;
+            if (!string.IsNullOrWhiteSpace(geoPart.GptType) && !string.Equals(geoPart.GptType, actualGptType, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Partition {geoPart.Index} GPT type mismatch. Expected {geoPart.GptType}, found {actualGptType}.");
+            }
+
+            var actualGuid = partObj["Guid"] as string;
+            if (!string.IsNullOrWhiteSpace(geoPart.GptId) && !string.Equals(geoPart.GptId, actualGuid, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Partition {geoPart.Index} unique ID mismatch. Expected {geoPart.GptId}, found {actualGuid}.");
+            }
+
+            var letter = partObj["DriveLetter"] as char?;
+            if (useUefi && string.Equals(geoPart.GptType, "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}", StringComparison.OrdinalIgnoreCase))
+            {
+                if (letter == null || letter == '\0')
+                {
+                    throw new InvalidOperationException("EFI partition is not mounted with a drive letter; boot files cannot be provisioned.");
+                }
+                efiLetter = letter.ToString();
+            }
+
+            if (letter != null && letter != '\0' && !string.IsNullOrWhiteSpace(geoPart.FileSystem))
+            {
+                var di = new DriveInfo(letter.ToString());
+                if (!string.Equals(di.DriveFormat, geoPart.FileSystem, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Partition {geoPart.Index} filesystem mismatch. Expected {geoPart.FileSystem}, found {di.DriveFormat}.");
+                }
+            }
+        }
+
+        var driveLetters = GetPartitionDriveLetters(diskNumber);
+        if (useUefi)
+        {
+            efiLetter ??= driveLetters.FirstOrDefault(dl => Directory.Exists($"{dl}:\\EFI"));
+            if (string.IsNullOrEmpty(efiLetter) || !File.Exists($"{efiLetter}:\\EFI\\Microsoft\\Boot\\bootmgfw.efi"))
+            {
+                throw new InvalidOperationException("EFI boot files are missing after apply; cannot ensure bootability.");
+            }
+        }
+        else
+        {
+            var windowsDrive = driveLetters.FirstOrDefault(dl => File.Exists($"{dl}:\\bootmgr"));
+            if (string.IsNullOrEmpty(windowsDrive))
+            {
+                throw new InvalidOperationException("Boot files not detected on any restored partition. BIOS boot cannot be guaranteed.");
+            }
+        }
+
+        Logger.Log("Layout validation completed successfully", Logger.LogLevel.Info);
+    }
+
+    private static string GetNextFreeLetter(HashSet<char> usedLetters)
+    {
+        var preferred = new List<char> { 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z' };
+        for (char c = 'Z'; c >= 'C'; c--) preferred.Add(c);
+
+        foreach (var letter in preferred)
+        {
+            if (!usedLetters.Contains(letter))
+            {
+                return letter.ToString();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static void AssignPartitionLetter(int diskNumber, uint partitionNumber, string letter)
+    {
+        try
+        {
+            ExecutePowerShell($"Set-Partition -DiskNumber {diskNumber} -PartitionNumber {partitionNumber} -NewDriveLetter {letter}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Warning: Failed to assign drive letter {letter} to partition {partitionNumber}: {ex.Message}", Logger.LogLevel.Warning);
         }
     }
 

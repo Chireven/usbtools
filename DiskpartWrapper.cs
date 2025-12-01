@@ -50,8 +50,18 @@ public static class DiskpartWrapper
                 script.AppendLine($"create partition primary size={sizeMB}");
             }
 
+            if (!string.IsNullOrWhiteSpace(partition.GptType))
+            {
+                script.AppendLine($"set id={partition.GptType}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(partition.GptId))
+            {
+                script.AppendLine($"uniqueid partition id={partition.GptId}");
+            }
+
             // script.AppendLine($"select partition {currentPartitionIndex}"); // Removed to rely on implicit selection
-            
+
             if (!string.IsNullOrEmpty(partition.DriveLetter))
             {
                 script.AppendLine($"assign letter={partition.DriveLetter.TrimEnd(':')}");
@@ -169,5 +179,8 @@ public static class DiskpartWrapper
         public string Label { get; set; } = "";
         public string DriveLetter { get; set; } = "";
         public bool IsActive { get; set; }
+        public string? GptType { get; set; }
+        public string? GptId { get; set; }
+        public bool IsFixed { get; set; }
     }
 }
