@@ -175,6 +175,10 @@ class Program
         string provider = "auto";
         string bootMode = "auto";
         bool forceBoot = false;
+        bool verboseTree = false;
+        bool quietMode = false;
+        bool preflightOnly = false;
+        bool verifyHashes = false;
 
         // Parse arguments
         for (int i = 1; i < args.Length; i++)
@@ -215,6 +219,22 @@ class Program
             else if (arg == "--force-boot" || arg == "-f")
             {
                 forceBoot = true;
+            }
+            else if (arg == "--verbose" || arg == "--verbose-tree")
+            {
+                verboseTree = true;
+            }
+            else if (arg == "--quiet" || arg == "-q")
+            {
+                quietMode = true;
+            }
+            else if (arg == "--dry-run" || arg == "--preflight")
+            {
+                preflightOnly = true;
+            }
+            else if (arg == "--verify")
+            {
+                verifyHashes = true;
             }
             else if (arg == "--help" || arg == "-h")
             {
@@ -264,7 +284,11 @@ class Program
         }
         source = resolvedSource;
 
-        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider, bootMode, forceBoot);
+        Logger.QuietMode = quietMode;
+        Logger.DebugMode = Logger.DebugMode || verboseTree;
+        ProgressTree.Verbose = verboseTree;
+
+        return await RestoreCommand.ExecuteAsync(source, target, diskNumber, autoYes, provider, bootMode, forceBoot, preflightOnly, verifyHashes);
     }
 
     private static async Task<int> ExecuteTestAsync(string[] args)
@@ -467,6 +491,22 @@ class Program
         Console.Write("  -f, --force-boot          ");
         Console.ResetColor();
         Console.WriteLine("Force bcdboot generation even if boot files exist");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("      --verbose             ");
+        Console.ResetColor();
+        Console.WriteLine("Show progressive, timestamped restore steps");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  -q, --quiet               ");
+        Console.ResetColor();
+        Console.WriteLine("Suppress info output for automation");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("      --dry-run             ");
+        Console.ResetColor();
+        Console.WriteLine("Run preflight scoring without modifying the disk");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("      --verify              ");
+        Console.ResetColor();
+        Console.WriteLine("After apply, hash and verify restored partitions");
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("  -v, --debug               ");
         Console.ResetColor();

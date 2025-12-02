@@ -8,6 +8,7 @@ public static class Logger
     private static readonly object _lock = new();
     private static bool _isFirstWrite = true;
     public static bool DebugMode { get; set; } = false;
+    public static bool QuietMode { get; set; } = false;
 
     public static void Initialize(string? logFilePath = null)
     {
@@ -53,16 +54,19 @@ public static class Logger
         // Console output with colors
         lock (_lock)
         {
-            Console.ForegroundColor = level switch
+            if (!(QuietMode && level == LogLevel.Info))
             {
-                LogLevel.Debug => ConsoleColor.DarkGray,
-                LogLevel.Info => ConsoleColor.Green,
-                LogLevel.Warning => ConsoleColor.Yellow,
-                LogLevel.Error => ConsoleColor.Red,
-                _ => ConsoleColor.White
-            };
-            Console.WriteLine(logMessage);
-            Console.ResetColor();
+                Console.ForegroundColor = level switch
+                {
+                    LogLevel.Debug => ConsoleColor.DarkGray,
+                    LogLevel.Info => ConsoleColor.Green,
+                    LogLevel.Warning => ConsoleColor.Yellow,
+                    LogLevel.Error => ConsoleColor.Red,
+                    _ => ConsoleColor.White
+                };
+                Console.WriteLine(logMessage);
+                Console.ResetColor();
+            }
 
             // File output
             if (_logFilePath != null)

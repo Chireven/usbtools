@@ -23,10 +23,19 @@ public class DriveGeometry
     [JsonPropertyName("partitions")]
     public List<PartitionInfo> Partitions { get; set; } = new();
 
+    [JsonPropertyName("templateHint")]
+    public string? TemplateHint { get; set; }
+
+    [JsonPropertyName("bitlockerDetected")]
+    public bool BitLockerDetected { get; set; }
+
+    [JsonPropertyName("secureBootRequired")]
+    public bool SecureBootRequired { get; set; }
+
     public string ToJson()
     {
-        return JsonSerializer.Serialize(this, new JsonSerializerOptions 
-        { 
+        return JsonSerializer.Serialize(this, new JsonSerializerOptions
+        {
             WriteIndented = false 
         });
     }
@@ -74,4 +83,7 @@ public class PartitionInfo
 
     [JsonPropertyName("gptId")]
     public string? GptId { get; set; }
+
+    [JsonPropertyName("dataHash")]
+    public string? DataHash { get; set; }
 }
